@@ -65,6 +65,23 @@ export async function validateBaseUrl(raw: string): Promise<ValidatedUrl> {
     throw new GatewayError("bad_base_url", "Base URL must not contain credentials");
   }
 
+  // Users often paste a full endpoint URL (e.g. ".../v1/chat/completions")
+  // instead of the API root — strip known endpoint suffixes so the adapter
+  // appends its own path correctly.
+  for (const suffix of [
+    "/chat/completions",
+    "/completions",
+    "/responses",
+    "/messages",
+    "/models",
+    "/embeddings",
+  ]) {
+    if (url.pathname.toLowerCase().endsWith(suffix)) {
+      url.pathname = url.pathname.slice(0, -suffix.length);
+      break;
+    }
+  }
+
   const isHttp = url.protocol === "http:";
   const isHttps = url.protocol === "https:";
   if (!isHttps && !(isHttp && allowPrivate())) {

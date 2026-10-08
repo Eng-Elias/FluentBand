@@ -34,11 +34,20 @@ export function upstreamRequest(opts: {
         method,
         headers,
         servername: isHttps ? validated.url.hostname : undefined,
+        // Happy Eyeballs would re-resolve and could race to a different IP;
+        // we pin to the SSRF-validated address instead.
+        autoSelectFamily: false,
         lookup: (
           _hostname: string,
-          _opts: object,
-          cb: (err: Error | null, address: string, family: number) => void,
-        ) => cb(null, validated.pinnedAddress, validated.family),
+          opts: { all?: boolean } | undefined,
+          cb: (err: Error | null, address: unknown, family?: number) => void,
+        ) => {
+          // With `all: true` (autoSelectFamily path) Node expects an entries
+          // array; otherwise a single (address, family) pair.
+          const entry = { address: validated.pinnedAddress, family: validated.family };
+          if (opts?.all) cb(null, [entry]);
+          else cb(null, entry.address, entry.family);
+        },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any,
       (res) => {

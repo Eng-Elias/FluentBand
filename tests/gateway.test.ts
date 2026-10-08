@@ -163,6 +163,27 @@ describe("adapters", () => {
     });
     expect(models).toEqual(["m1", "m2"]);
   });
+
+  it("connects to the pinned IP when the URL uses a hostname", async () => {
+    // IP literals skip the custom `lookup` entirely — a hostname exercises
+    // the pinned-IP path (regression: Happy Eyeballs `all:true` lookup shape).
+    mode = "openai";
+    const port = new URL(base).port;
+    const res = await openaiAdapter.chat({
+      provider: { kind: "openai", baseUrl: `http://localhost:${port}/v1`, model: "m" },
+      apiKey: "k",
+      messages: [{ role: "user", content: "hi" }],
+      params: {},
+      stream: false,
+      validated: {
+        url: new URL(`http://localhost:${port}/v1`),
+        pinnedAddress: "127.0.0.1",
+        family: 4,
+      },
+    });
+    expect(res.kind).toBe("complete");
+    if (res.kind === "complete") expect(res.text).toBe("hello back");
+  });
 });
 
 describe("ssrf guard", () => {
@@ -193,5 +214,12 @@ describe("ssrf guard", () => {
 
   it("rejects invalid URL", async () => {
     await expect(validateBaseUrl("not a url")).rejects.toThrow();
+  });
+
+  it("strips pasted endpoint suffixes from the base URL", async () => {
+    process.env.ALLOW_PRIVATE_HOSTS = "true";
+    const v = await validateBaseUrl("http://127.0.0.1:11434/v1/chat/completions");
+    expect(v.url.pathname).toBe("/v1");
+    delete process.env.ALLOW_PRIVATE_HOSTS;
   });
 });
