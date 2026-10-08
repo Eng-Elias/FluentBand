@@ -1,0 +1,27 @@
+# Optional local speech server for FluentBand.
+# Runs faster-whisper (STT) + Kokoro/Piper (TTS) behind an OpenAI-style API.
+# The app calls it directly from the browser — enable CORS for the app origin.
+#
+# Usage:
+#   docker compose up -d
+#   Then in the app: Settings → Speech → provider = "local-server",
+#   URL = http://localhost:8788
+#
+# NOTE: this only works when the app is served from localhost (or the same
+# machine). Browsers block plain-http LAN calls from https-hosted pages.
+
+services:
+  speech:
+    build: .
+    ports:
+      - "8788:8788"
+    volumes:
+      - speech-models:/data/models
+    environment:
+      # adjust to your app's origin for browser CORS
+      - CORS_ORIGINS=http://localhost:3000
+      - WHISPER_MODEL=base.en
+    restart: unless-stopped
+
+volumes:
+  speech-models:

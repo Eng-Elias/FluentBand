@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: fluentband
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Optional: set ACCESS_PASSCODE to require a passcode on LLM gateway routes.
+      # - key: ACCESS_PASSCODE
+      #   sync: false
+      # Optional: allow private/localhost upstreams (self-host only, never on Render).
+      # - key: ALLOW_PRIVATE_HOSTS
+      #   value: "false"

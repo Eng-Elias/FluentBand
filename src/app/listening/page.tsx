@@ -1,0 +1,243 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import type { ListeningScript } from "@/shared/schemas/listening";
+import { useProfile, useSettings, NoProviderError } from "@/core/settings";
+import { generateListening, makeGenCtx } from "@/features/content";
+import { recordAttempt } from "@/features/grading";
+import { makeTTS, playBlob } from "@/core/speech/tts";
+import { pickTopic } from "@/core/planner/topics";
+import { getDb } from "@/core/db/db";
+import { Badge, Button, Card, Input, Spinner } from "@/components/ui/primitives";
+
+type Phase = "idle" | "loading" | "preparing-audio" | "playing" | "answering" | "review";
+
+const SPEAKER_VOICES = ["af_heart", "am_michael", "bf_emma", "bm_george"];
+
+function norm(s: string) {
+  return s.toLowerCase().trim();
+}
+
+export default function ListeningPage() {
+  const settings = useSettings();
+  const profile = useProfile();
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [section, setSection] = useState(1);
+  const [data, setData] = useState<ListeningScript | null>(null);
+  const [audioBlobs, setAudioBlobs] = useState<Blob[]>([]);
+  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [error, setError] = useState("");
+  const [progress, setProgress] = useState("");
+  const [playing, setPlaying] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const audioQRef = useRef<Blob[]>([]);
+  const stopRef = useRef(false);
+
+  useEffect(() => () => { stopRef.current = true; }, []);
+
+  async function start() {
+    setPhase("loading");
+    setError("");
+    setAnswers({});
+    setShowTranscript(false);
+    try {
+      const ctx = makeGenCtx(settings, profile);
+      const seen = await getDb().topicsSeen.toArray();
+      const { data } = await generateListening(pickTopic(seen), section, ctx);
+      setData(data);
+      setPhase("preparing-audio");
+      setProgress("Loading TTS model…");
+      const tts = makeTTS(settings!.speech);
+      await tts.ensureReady((p) =>
+        setProgress(
+          p.total > 0
+            ? `Downloading TTS model… ${Math.round((p.loaded / p.total) * 100)}%`
+            : "Loading TTS model…",
+        ),
+      );
+      const voiceOf = new Map(data.speakers.map((s, i) => [s, SPEAKER_VOICES[i % SPEAKER_VOICES.length]]));
+      const blobs: Blob[] = [];
+      for (let i = 0; i < data.script.length; i++) {
+        const turn = data.script[i];
+        setProgress(`Synthesizing audio ${i + 1}/${data.script.length}…`);
+        blobs.push(
+          await tts.speak(turn.text, {
+            voice: voiceOf.get(turn.speaker) ?? SPEAKER_VOICES[0],
+            speed: settings!.speech.speed,
+          }),
+        );
+      }
+      audioQRef.current = blobs;
+      setAudioBlobs(blobs);
+      setPhase("answering");
+      setProgress("");
+    } catch (e) {
+      setError(e instanceof NoProviderError ? e.message : (e as Error).message);
+      setPhase("idle");
+    }
+  }
+
+  async function playAll(once = true) {
+    setPlaying(true);
+    stopRef.current = false;
+    for (const b of audioQRef.current) {
+      if (stopRef.current) break;
+      try {
+        await playBlob(b);
+      } catch {
+        /* web speech fallback already played */
+      }
+    }
+    setPlaying(false);
+    void once;
+  }
+
+  function isCorrect(i: number): boolean {
+    const q = data!.questions[i];
+    return norm(answers[i] ?? "") === norm(q.answer);
+  }
+
+  async function submit() {
+    if (!data) return;
+    const correct = data.questions.filter((_, i) => isCorrect(i)).length;
+    const p = correct / data.questions.length;
+    const band = p >= 0.9 ? 8.5 : p >= 0.8 ? 7.5 : p >= 0.7 ? 7 : p >= 0.6 ? 6.5 : p >= 0.5 ? 6 : p >= 0.4 ? 5.5 : p >= 0.3 ? 5 : 4.5;
+    await recordAttempt({
+      skill: "listening",
+      taskType: `section${data.section}`,
+      promptSnapshot: `${data.title} (${data.topic})`,
+      input: JSON.stringify(answers),
+      result: { correct, total: data.questions.length },
+      band,
+    });
+    setPhase("review");
+    setShowTranscript(true);
+  }
+
+  const score = data ? data.questions.filter((_, i) => isCorrect(i)).length : 0;
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold">Listening Practice</h1>
+
+      {phase === "idle" && (
+        <Card>
+          <label className="text-sm">
+            Section
+            <div className="mt-2 flex gap-2">
+              {[1, 2, 3, 4].map((s) => (
+                <Button key={s} variant={section === s ? "default" : "outline"} onClick={() => setSection(s)}>
+                  {s}
+                </Button>
+              ))}
+            </div>
+          </label>
+          <p className="mt-3 text-sm text-zinc-500">
+            Section {section}: {section === 1 ? "everyday conversation" : section === 2 ? "everyday monologue" : section === 3 ? "academic conversation" : "academic lecture"}.
+            Script is generated by the LLM, then spoken locally via TTS with distinct voices.
+          </p>
+          <Button className="mt-4" onClick={start}>Generate listening test</Button>
+          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+        </Card>
+      )}
+
+      {(phase === "loading" || phase === "preparing-audio") && (
+        <Card><Spinner className="mr-2" />{progress || "Generating script…"}</Card>
+      )}
+
+      {(phase === "answering" || phase === "review") && data && (
+        <>
+          <Card>
+            <h2 className="font-semibold">{data.title}</h2>
+            <p className="text-xs text-zinc-500">
+              Section {data.section} · {data.speakers.join(", ")} · {audioBlobs.length} turns
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button onClick={() => playAll()} disabled={playing}>
+                {playing ? "Playing…" : phase === "review" ? "Replay" : "Play audio"}
+              </Button>
+              {playing && (
+                <Button variant="outline" onClick={() => { stopRef.current = true; }}>Stop</Button>
+              )}
+            </div>
+            <p className="mt-2 text-xs text-zinc-500">
+              Exam mode tip: play once, answer while listening.
+            </p>
+          </Card>
+
+          <Card>
+            {phase === "review" && (
+              <div className="mb-3">
+                <Badge tone="green">{score}/{data.questions.length}</Badge>
+              </div>
+            )}
+            <ol className="space-y-4">
+              {data.questions.map((q, i) => (
+                <li key={i} className="text-sm">
+                  <div className="font-medium">
+                    {i + 1}. {q.question} <Badge className="ml-1">{q.type}</Badge>
+                  </div>
+                  {q.type === "form_completion" ? (
+                    <Input
+                      className="mt-1" value={answers[i] ?? ""} disabled={phase === "review"}
+                      onChange={(e) => setAnswers({ ...answers, [i]: e.target.value })}
+                      placeholder="Type what you hear"
+                    />
+                  ) : (
+                    <div className="mt-1 space-y-1">
+                      {q.options.map((o, j) => (
+                        <label key={j} className="flex items-center gap-2">
+                          <input
+                            type="radio" name={`q${i}`} value={o}
+                            checked={(answers[i] ?? "") === o} disabled={phase === "review"}
+                            onChange={() => setAnswers({ ...answers, [i]: o })}
+                          />
+                          {o}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {phase === "review" && (
+                    <div className="mt-1 text-xs">
+                      {isCorrect(i) ? (
+                        <Badge tone="green">correct</Badge>
+                      ) : (
+                        <>
+                          <Badge tone="red">incorrect</Badge>{" "}
+                          <span className="text-zinc-500">answer: {q.answer}</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ol>
+            {phase === "answering" ? (
+              <Button className="mt-4" onClick={submit}>Submit answers</Button>
+            ) : (
+              <Button className="mt-4" variant="outline" onClick={() => setPhase("idle")}>New section</Button>
+            )}
+          </Card>
+
+          <Card>
+            <button
+              className="text-sm text-blue-600 underline"
+              onClick={() => setShowTranscript((s) => !s)}
+            >
+              {showTranscript ? "Hide transcript" : "Show transcript"}
+            </button>
+            {showTranscript && (
+              <div className="mt-3 space-y-1 text-sm">
+                {data.script.map((t, i) => (
+                  <p key={i}>
+                    <span className="font-medium">{t.speaker}:</span> {t.text}
+                  </p>
+                ))}
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}

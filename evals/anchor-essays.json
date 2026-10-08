@@ -1,0 +1,26 @@
+{
+  "description": "Hand-checked anchor essays for grader calibration. When switching models, grade these and check the band estimate stays within ±0.5 of expected.",
+  "essays": [
+    {
+      "id": "band5-task2",
+      "taskType": "task2",
+      "prompt": "Some people think university education should be free for all students. To what extent do you agree or disagree?",
+      "expectedBand": 5.0,
+      "essay": "I agree that university should be free. Because many people they cannot pay the fees and so they don't go to university. This is unfair for poor families. Also education make the country better because more educated people means better economy. Government should pay for students because students is the future. On the other hand some people say it cost too much money for government. But I think education is more important than other things. In conclusion I think university must be free for everyone."
+    },
+    {
+      "id": "band65-task2",
+      "taskType": "task2",
+      "prompt": "Some people think university education should be free for all students. To what extent do you agree or disagree?",
+      "expectedBand": 6.5,
+      "essay": "Whether university education ought to be funded by the state is a contentious issue. While there are valid arguments on both sides, I largely agree that tuition should be free.\n\nFirstly, free higher education promotes social equality. Capable students from low-income families are currently deterred by the prospect of substantial debt, which means talent is distributed by wealth rather than ability. Countries such as Germany demonstrate that abolishing tuition fees can widen access without bankrupting the state.\n\nAdmittedly, there are drawbacks. Fully subsidised degrees are expensive, and taxpayers who never attend university effectively subsidise those who do. Moreover, graduates typically earn more, so some argue they should contribute to the cost.\n\nNevertheless, I believe the long-term benefits outweigh these concerns. A more educated workforce generates higher tax revenue, and societies with greater social mobility tend to be more stable and innovative. A graduate tax, rather than upfront fees, could balance fairness with sustainability.\n\nIn conclusion, while free tuition carries a fiscal cost, the gains in equality and economic capacity justify the investment."
+    },
+    {
+      "id": "band8-task1",
+      "taskType": "task1",
+      "prompt": "The chart shows electricity consumption by sector in a European country between 2000 and 2020.",
+      "expectedBand": 8.0,
+      "essay": "The line graph illustrates how much electricity was consumed by three sectors — residential, industrial and commercial — in a European country over a twenty-year period.\n\nOverall, residential consumption rose steadily and overtook industrial use as the largest category, while industrial demand declined markedly. Commercial usage remained comparatively stable throughout.\n\nIn 2000, industry accounted for the largest share at around 450 GWh, followed by residential use at 300 GWh and commercial use at 200 GWh. Over the next decade, industrial consumption fell sharply to approximately 350 GWh, whereas residential demand climbed to just under 400 GWh, overtaking it around 2012.\n\nBy 2020, households consumed roughly 480 GWh, nearly double the industrial figure of 250 GWh. Commercial usage, meanwhile, edged up slightly to about 230 GWh, remaining the smallest of the three sectors."
+    }
+  ]
+}
