@@ -9,7 +9,12 @@ import { anthropicAdapter } from "@/server/llm/adapters/anthropic";
 let server: http.Server;
 let base: string;
 let lastBody = "";
-let mode: "openai" | "anthropic" | "sse-openai" | "sse-anthropic" = "openai";
+let mode:
+  | "openai"
+  | "anthropic"
+  | "sse-openai"
+  | "sse-anthropic"
+  | "reject-temp" = "openai";
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
@@ -22,6 +27,19 @@ beforeAll(async () => {
         res.end(JSON.stringify({ data: [{ id: "m1" }, { id: "m2" }] }));
         return;
       }
+      if (mode === "reject-temp" && JSON.parse(lastBody).temperature !== undefined) {
+        res.statusCode = 400;
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify({
+            error: {
+              type: "invalid_request_error",
+              message: "`temperature` is deprecated for this model.",
+            },
+          }),
+        );
+        return;
+      }
       if (mode === "openai") {
         res.setHeader("content-type", "application/json");
         res.end(
@@ -30,7 +48,7 @@ beforeAll(async () => {
             usage: { prompt_tokens: 3, completion_tokens: 2 },
           }),
         );
-      } else if (mode === "anthropic") {
+      } else if (mode === "anthropic" || mode === "reject-temp") {
         res.setHeader("content-type", "application/json");
         res.end(
           JSON.stringify({
@@ -162,6 +180,21 @@ describe("adapters", () => {
       validated: await validated(),
     });
     expect(models).toEqual(["m1", "m2"]);
+  });
+
+  it("retries without a param the model rejects (e.g. temperature)", async () => {
+    mode = "reject-temp";
+    const res = await anthropicAdapter.chat({
+      provider: { kind: "anthropic", baseUrl: base + "/v1", model: "c" },
+      apiKey: "k",
+      messages: [{ role: "user", content: "hi" }],
+      params: { temperature: 0.5, maxTokens: 100 },
+      stream: false,
+      validated: await validated(),
+    });
+    expect(res.kind).toBe("complete");
+    expect(JSON.parse(lastBody).temperature).toBeUndefined();
+    expect(JSON.parse(lastBody).max_tokens).toBe(100);
   });
 
   it("connects to the pinned IP when the URL uses a hostname", async () => {
