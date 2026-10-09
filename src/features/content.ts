@@ -6,7 +6,7 @@ import type { ChartData, Task2Prompt } from "@/shared/schemas/writing";
 import type { CueCard, SpeakingFollowUp, SpeakingPart1 } from "@/shared/schemas/speaking";
 import type { VocabPack } from "@/shared/schemas/vocab";
 import * as llm from "@/core/llm/client";
-import { getDb, stamp } from "@/core/db/db";
+import { getDb, now, stamp } from "@/core/db/db";
 import type { ContentItem } from "@/core/db/types";
 import { buildListeningPrompt } from "@/prompts/listening";
 import { buildReadingPrompt } from "@/prompts/reading";
@@ -69,13 +69,14 @@ export function verifyListening(l: ListeningScript): {
   };
 }
 
-async function cacheContent(
+export async function cacheContent(
   kind: string,
   topic: string,
   level: string,
   payload: unknown,
+  extra?: Partial<ContentItem>,
 ): Promise<ContentItem> {
-  const item = stamp<ContentItem>({ kind, topic, level, payload });
+  const item = stamp<ContentItem>({ kind, topic, level, payload, ...extra });
   await getDb().content.add(item);
   // record topic usage
   const db = getDb();
@@ -177,10 +178,31 @@ export async function generateVocabPack(
   return { content, data };
 }
 
+/** Load a saved content item (for the library / deep links). */
+export async function loadContent(id: string): Promise<ContentItem | undefined> {
+  const item = await getDb().content.get(id);
+  if (!item || item.deletedAt) return undefined;
+  void getDb().content.update(id, { usedAt: now() });
+  return item;
+}
+
+/** Persist synthesized audio turns (e.g. a listening script) on a content row. */
+export async function saveContentAudio(id: string, blobs: Blob[]): Promise<void> {
+  await getDb().content.update(id, { audioBlobs: blobs, updatedAt: now() });
+}
+
+/** Soft-delete content items by id. */
+export async function deleteContent(ids: string[]): Promise<void> {
+  const t = now();
+  await getDb().content.bulkUpdate(
+    ids.map((id) => ({ key: id, changes: { deletedAt: t, updatedAt: t } })),
+  );
+}
+
 export async function generatePart1(
   theme: string,
   ctx: GenCtx,
-): Promise<SpeakingPart1> {
+): Promise<{ content: ContentItem; data: SpeakingPart1 }> {
   const { data } = await llm.json<SpeakingPart1>(
     ctx.providerKey.provider,
     "speaking.part1",
@@ -188,13 +210,14 @@ export async function generatePart1(
     { temperature: 0.7, maxTokens: 800 },
     { apiKey: ctx.providerKey.apiKey },
   );
-  return data;
+  const content = await cacheContent("speaking.part1", theme, String(ctx.level), data);
+  return { content, data };
 }
 
 export async function generateCueCard(
   topic: string,
   ctx: GenCtx,
-): Promise<CueCard> {
+): Promise<{ content: ContentItem; data: CueCard }> {
   const { data } = await llm.json<CueCard>(
     ctx.providerKey.provider,
     "speaking.part2.cuecard",
@@ -202,7 +225,8 @@ export async function generateCueCard(
     { temperature: 0.7, maxTokens: 800 },
     { apiKey: ctx.providerKey.apiKey },
   );
-  return data;
+  const content = await cacheContent("speaking.part2.cuecard", topic, String(ctx.level), data);
+  return { content, data };
 }
 
 export async function generatePart3(

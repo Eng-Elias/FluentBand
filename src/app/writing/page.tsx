@@ -4,7 +4,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { ChartData, Task2Prompt, WritingFeedback } from "@/shared/schemas/writing";
 import { useProfile, useSettings, NoProviderError } from "@/core/settings";
-import { generateTask1, generateTask2, makeGenCtx } from "@/features/content";
+import { generateTask1, generateTask2, loadContent, makeGenCtx } from "@/features/content";
 import { gradeWriting, harvestCorrections, recordAttempt } from "@/features/grading";
 import { buildTask1GradePrompt, buildTask2GradePrompt } from "@/prompts/writing";
 import { pickTopic } from "@/core/planner/topics";
@@ -31,12 +31,14 @@ function WritingInner() {
   const [phase, setPhase] = useState<Phase>("pick");
   const [t1, setT1] = useState<ChartData | null>(null);
   const [t2, setT2] = useState<Task2Prompt | null>(null);
+  const [contentId, setContentId] = useState<string | undefined>();
   const [essay, setEssay] = useState("");
   const [feedback, setFeedback] = useState<WritingFeedback | null>(null);
   const [error, setError] = useState("");
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [attempts, setAttempts] = useState<{ text: string; band?: number }[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const contentParam = params.get("content");
 
   const wordCount = essay.trim() ? essay.trim().split(/\s+/).length : 0;
   const minWords = task === "t1" ? 150 : 250;
@@ -47,6 +49,41 @@ function WritingInner() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
+
+  // Deep link from the library: reopen a saved task.
+  useEffect(() => {
+    if (!contentParam) return;
+    let cancelled = false;
+    void loadContent(contentParam).then((item) => {
+      if (cancelled) return;
+      if (!item) {
+        setError("Saved task not found.");
+        return;
+      }
+      if (item.kind === "writing.task1.chart") {
+        setTask("t1");
+        setT1(item.payload as ChartData);
+      } else if (item.kind === "writing.task2.prompt") {
+        setTask("t2");
+        setT2(item.payload as Task2Prompt);
+      } else {
+        setError("Saved task not found.");
+        return;
+      }
+      setContentId(item.id);
+      setEssay("");
+      setFeedback(null);
+      setAttempts([]);
+      setSecondsLeft(item.kind === "writing.task1.chart" ? 20 * 60 : 40 * 60);
+      setPhase("writing");
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(
+        () => setSecondsLeft((s) => Math.max(0, s - 1)),
+        1000,
+      );
+    });
+    return () => { cancelled = true; };
+  }, [contentParam]);
 
   async function start() {
     setPhase("loading");
@@ -59,11 +96,13 @@ function WritingInner() {
       const seen = await getDb().topicsSeen.toArray();
       const topic = pickTopic(seen);
       if (task === "t1") {
-        const { data } = await generateTask1(topic, ctx);
+        const { content, data } = await generateTask1(topic, ctx);
         setT1(data);
+        setContentId(content.id);
       } else {
-        const { data } = await generateTask2(topic, ctx);
+        const { content, data } = await generateTask2(topic, ctx);
         setT2(data);
+        setContentId(content.id);
       }
       setSecondsLeft(timeLimit);
       setPhase("writing");
@@ -96,6 +135,7 @@ function WritingInner() {
       const attempt = await recordAttempt({
         skill: "writing",
         taskType: task === "t1" ? "task1" : "task2",
+        promptId: contentId,
         promptSnapshot: task === "t1" ? t1!.description : t2!.prompt,
         input: essay,
         result: fb,

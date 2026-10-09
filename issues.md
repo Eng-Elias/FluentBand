@@ -1,0 +1,7 @@
+- I generated listening test but I can't access it after I left the page and open it again and same for all tests and vocabs too.
+- for the speaking test, everytime I click play, it start generating the audio again 
+- the play still enabled while generating the audio, so the user can click play multiple times 
+- if I ignore the evaluation test, I can't take it any more. 
+- I am thinking to store the generate as a library where I can return to them at any time to practice again with ability to filter and search. I also want the aibility to delete specific test, selected tests or all tests or delete tests of some category (with confirmation). I also want more options to backup specific categories or tests and specifically backup progress and results and corrections. 
+- I also want to control all configs from settings in brief with ability to backup and restore configs. 
+- to download the model, I need to start generating some test, so it will download the model and use it after download, that is good but I want to add buttons in settings to download the model manually too, so at the first time the user can go to settings and download the models manually then he go to the test page and start generating tests directly without waiting for the model to download.

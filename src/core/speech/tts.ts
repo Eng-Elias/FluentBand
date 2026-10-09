@@ -141,6 +141,55 @@ export class LocalServerTTS implements TTSProvider {
   }
 }
 
+/**
+ * Memoizing wrapper: replaying the same (voice, speed, text) returns the
+ * previously synthesized Blob instead of regenerating. Empty blobs
+ * (Web Speech plays directly, returns size-0) are never cached.
+ */
+export class CachingTTS implements TTSProvider {
+  id: string;
+  label: string;
+  private cache = new Map<string, Promise<Blob>>();
+
+  constructor(
+    private inner: TTSProvider,
+    private limit = 128,
+  ) {
+    this.id = inner.id;
+    this.label = inner.label;
+  }
+
+  ensureReady(onProgress?: (p: { loaded: number; total: number }) => void): Promise<void> {
+    return this.inner.ensureReady(onProgress);
+  }
+
+  speak(text: string, opts?: { voice?: string; speed?: number }): Promise<Blob> {
+    const key = `${opts?.voice ?? ""}|${opts?.speed ?? 1}|${text}`;
+    const hit = this.cache.get(key);
+    if (hit) return hit;
+    const p = this.inner.speak(text, opts).then(
+      (b) => {
+        if (b.size === 0) this.cache.delete(key);
+        return b;
+      },
+      (e) => {
+        this.cache.delete(key);
+        throw e;
+      },
+    );
+    this.cache.set(key, p);
+    if (this.cache.size > this.limit) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest !== undefined) this.cache.delete(oldest);
+    }
+    return p;
+  }
+
+  voices(): string[] {
+    return this.inner.voices();
+  }
+}
+
 export function makeTTS(cfg: {
   ttsProvider: string;
   localServerUrl?: string;
@@ -150,6 +199,25 @@ export function makeTTS(cfg: {
     return new LocalServerTTS(cfg.localServerUrl);
   }
   return new KokoroTTSProvider();
+}
+
+const ttsInstances = new Map<string, TTSProvider>();
+
+/**
+ * Shared, caching TTS per speech config — avoids spawning a fresh worker
+ * (and re-loading the model) on every call, and replays audio instantly.
+ */
+export function getTTS(cfg: {
+  ttsProvider: string;
+  localServerUrl?: string;
+}): TTSProvider {
+  const key = `${cfg.ttsProvider}|${cfg.localServerUrl ?? ""}`;
+  let tts = ttsInstances.get(key);
+  if (!tts) {
+    tts = new CachingTTS(makeTTS(cfg));
+    ttsInstances.set(key, tts);
+  }
+  return tts;
 }
 
 /** Play an audio blob; resolves when playback ends. */

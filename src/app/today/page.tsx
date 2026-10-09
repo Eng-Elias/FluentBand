@@ -120,11 +120,13 @@ export default function TodayPage() {
               <span>{session.minutes} min planned</span>
             </div>
             <Progress className="mt-2" value={total ? (doneCount / total) * 100 : 0} />
-            {profile && !profile.onboardingDone && (
-              <p className="mt-2 text-sm text-amber-600">
-                Tip: take the <Link href="/diagnostic" className="underline">quick diagnostic</Link> to calibrate levels.
-              </p>
-            )}
+            <p className="mt-2 text-sm text-amber-600">
+              {profile && !profile.onboardingDone
+                ? "Tip: take the "
+                : "Levels drift — retake the "}
+              <Link href="/diagnostic" className="underline">quick diagnostic</Link>
+              {profile && !profile.onboardingDone ? " to calibrate levels." : " anytime to recalibrate."}
+            </p>
           </Card>
 
           <div className="space-y-3">

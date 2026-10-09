@@ -60,6 +60,7 @@ export async function gradeSpeaking(
 export async function recordAttempt(fields: {
   skill: Skill;
   taskType: string;
+  promptId?: string;
   promptSnapshot: string;
   input: string;
   result?: unknown;

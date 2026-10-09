@@ -10,7 +10,7 @@ import {
 import { EXPORTABLE_TABLES, TABLE_REGISTRY } from "@/core/backup/registry";
 import { mergeTable } from "@/core/backup/merge";
 import { encryptSecrets, decryptSecrets } from "@/core/backup/crypto";
-import type { Card } from "@/core/db/types";
+import type { Card, ContentItem } from "@/core/db/types";
 import { newFsrsState } from "@/core/srs/fsrs";
 import { zipSync, strToU8 } from "fflate";
 
@@ -143,6 +143,34 @@ describe("backup", () => {
     const inc = { id: "1", createdAt: 1, updatedAt: 90, deletedAt: 300 };
     const res = mergeTable<{ id: string; createdAt: number; updatedAt: number; deletedAt?: number }>([local], [inc], "lww");
     expect(res.rows[0].deletedAt).toBe(300);
+  });
+
+  it("scoped export: categories + contentIds limit what's included", async () => {
+    const db = freshDb("rt7");
+    await seed(db);
+    const item = stamp<ContentItem>({
+      kind: "reading.passage",
+      topic: "coral reefs",
+      level: "6",
+      payload: { title: "Reefs" },
+      audioBlob: new Blob(["x"], { type: "audio/webm" }),
+    });
+    await db.content.add(item);
+    const bytes = await buildBackup(db, {
+      includeAudio: false,
+      includeKeys: false,
+      categories: ["content"],
+      contentIds: [item.id],
+    });
+    const parsed = await parseBackup(bytes);
+    expect(parsed.tables.content?.length).toBe(1);
+    expect(parsed.tables.cards).toBeUndefined();
+    expect(parsed.tables.settings).toBeUndefined();
+    // Blob fields are stripped from the JSON payload
+    expect(
+      (parsed.tables.content[0] as unknown as Record<string, unknown>).audioBlob,
+    ).toBeUndefined();
+    db.close();
   });
 
   it("every Dexie table is in the registry", () => {

@@ -12,11 +12,20 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Explicit theme override: .dark forces dark, .light forces light,
+   no class follows the OS preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.light) {
     --background: #0a0a0a;
     --foreground: #ededed;
   }
+}
+
+:root.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 body {

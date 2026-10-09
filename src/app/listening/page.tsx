@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { ListeningScript } from "@/shared/schemas/listening";
 import { useProfile, useSettings, NoProviderError } from "@/core/settings";
-import { generateListening, makeGenCtx } from "@/features/content";
+import {
+  generateListening,
+  loadContent,
+  makeGenCtx,
+  saveContentAudio,
+} from "@/features/content";
 import { recordAttempt } from "@/features/grading";
-import { makeTTS, playBlob } from "@/core/speech/tts";
+import { getTTS, playBlob } from "@/core/speech/tts";
 import { pickTopic } from "@/core/planner/topics";
 import { getDb } from "@/core/db/db";
 import { Badge, Button, Card, Input, Spinner } from "@/components/ui/primitives";
@@ -19,11 +25,21 @@ function norm(s: string) {
 }
 
 export default function ListeningPage() {
+  return (
+    <Suspense fallback={<Card><Spinner className="mr-2" />Loading…</Card>}>
+      <ListeningInner />
+    </Suspense>
+  );
+}
+
+function ListeningInner() {
   const settings = useSettings();
   const profile = useProfile();
+  const params = useSearchParams();
   const [phase, setPhase] = useState<Phase>("idle");
   const [section, setSection] = useState(1);
   const [data, setData] = useState<ListeningScript | null>(null);
+  const [contentId, setContentId] = useState<string | undefined>();
   const [audioBlobs, setAudioBlobs] = useState<Blob[]>([]);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
@@ -32,8 +48,75 @@ export default function ListeningPage() {
   const [showTranscript, setShowTranscript] = useState(false);
   const audioQRef = useRef<Blob[]>([]);
   const stopRef = useRef(false);
+  const contentParam = params.get("content");
 
   useEffect(() => () => { stopRef.current = true; }, []);
+
+  // Deep link from the library: reopen a previously generated test.
+  useEffect(() => {
+    if (!contentParam) return;
+    let cancelled = false;
+    (async () => {
+      setPhase("loading");
+      setError("");
+      const item = await loadContent(contentParam);
+      if (cancelled) return;
+      if (!item || item.kind !== "listening.script") {
+        setError("Saved test not found.");
+        setPhase("idle");
+        return;
+      }
+      const script = item.payload as ListeningScript;
+      setData(script);
+      setContentId(item.id);
+      if (item.audioBlobs?.length) {
+        audioQRef.current = item.audioBlobs;
+        setAudioBlobs(item.audioBlobs);
+        setPhase("answering");
+      } else {
+        await synthesize(script, item.id);
+      }
+    })().catch((e) => {
+      if (!cancelled) {
+        setError((e as Error).message);
+        setPhase("idle");
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentParam, settings]);
+
+  async function synthesize(script: ListeningScript, id?: string) {
+    setPhase("preparing-audio");
+    setProgress("Loading TTS model…");
+    const tts = getTTS(settings!.speech);
+    await tts.ensureReady((p) =>
+      setProgress(
+        p.total > 0
+          ? `Downloading TTS model… ${Math.round((p.loaded / p.total) * 100)}%`
+          : "Loading TTS model…",
+      ),
+    );
+    const voiceOf = new Map(
+      script.speakers.map((s, i) => [s, SPEAKER_VOICES[i % SPEAKER_VOICES.length]]),
+    );
+    const blobs: Blob[] = [];
+    for (let i = 0; i < script.script.length; i++) {
+      const turn = script.script[i];
+      setProgress(`Synthesizing audio ${i + 1}/${script.script.length}…`);
+      blobs.push(
+        await tts.speak(turn.text, {
+          voice: voiceOf.get(turn.speaker) ?? SPEAKER_VOICES[0],
+          speed: settings!.speech.speed,
+        }),
+      );
+    }
+    if (id) await saveContentAudio(id, blobs).catch(() => undefined);
+    audioQRef.current = blobs;
+    setAudioBlobs(blobs);
+    setPhase("answering");
+    setProgress("");
+  }
 
   async function start() {
     setPhase("loading");
@@ -43,34 +126,10 @@ export default function ListeningPage() {
     try {
       const ctx = makeGenCtx(settings, profile);
       const seen = await getDb().topicsSeen.toArray();
-      const { data } = await generateListening(pickTopic(seen), section, ctx);
+      const { content, data } = await generateListening(pickTopic(seen), section, ctx);
       setData(data);
-      setPhase("preparing-audio");
-      setProgress("Loading TTS model…");
-      const tts = makeTTS(settings!.speech);
-      await tts.ensureReady((p) =>
-        setProgress(
-          p.total > 0
-            ? `Downloading TTS model… ${Math.round((p.loaded / p.total) * 100)}%`
-            : "Loading TTS model…",
-        ),
-      );
-      const voiceOf = new Map(data.speakers.map((s, i) => [s, SPEAKER_VOICES[i % SPEAKER_VOICES.length]]));
-      const blobs: Blob[] = [];
-      for (let i = 0; i < data.script.length; i++) {
-        const turn = data.script[i];
-        setProgress(`Synthesizing audio ${i + 1}/${data.script.length}…`);
-        blobs.push(
-          await tts.speak(turn.text, {
-            voice: voiceOf.get(turn.speaker) ?? SPEAKER_VOICES[0],
-            speed: settings!.speech.speed,
-          }),
-        );
-      }
-      audioQRef.current = blobs;
-      setAudioBlobs(blobs);
-      setPhase("answering");
-      setProgress("");
+      setContentId(content.id);
+      await synthesize(data, content.id);
     } catch (e) {
       setError(e instanceof NoProviderError ? e.message : (e as Error).message);
       setPhase("idle");
@@ -105,6 +164,7 @@ export default function ListeningPage() {
     await recordAttempt({
       skill: "listening",
       taskType: `section${data.section}`,
+      promptId: contentId,
       promptSnapshot: `${data.title} (${data.topic})`,
       input: JSON.stringify(answers),
       result: { correct, total: data.questions.length },

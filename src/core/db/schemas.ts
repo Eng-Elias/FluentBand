@@ -113,6 +113,8 @@ export const contentRowSchema = z.looseObject({
   level: z.string(),
   payload: z.unknown(),
   usedAt: z.number().optional(),
+  // audioBlob/audioBlobs are stored in IndexedDB only — never serialized to
+  // backup JSON (audio ships as audio/* files in the zip).
 });
 
 export const sessionBlockSchema = z.looseObject({

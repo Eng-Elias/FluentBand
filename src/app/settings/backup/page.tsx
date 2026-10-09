@@ -11,7 +11,7 @@ import {
   type ParsedBackup,
   type PreviewStats,
 } from "@/core/backup/import";
-import { EXPORTABLE_TABLES } from "@/core/backup/registry";
+import { EXPORTABLE_TABLES, ALL_CATEGORIES, CATEGORY_LABELS, type BackupCategory } from "@/core/backup/registry";
 import { now, SINGLETON_SETTINGS_ID } from "@/core/db/db";
 import { Button, Card, Input, Badge, Spinner } from "@/components/ui/primitives";
 
@@ -20,6 +20,9 @@ export default function BackupPage() {
   const [status, setStatus] = useState("");
   const [includeAudio, setIncludeAudio] = useState(false);
   const [includeKeys, setIncludeKeys] = useState(false);
+  const [categories, setCategories] = useState<Set<BackupCategory>>(
+    new Set(ALL_CATEGORIES),
+  );
   const [passphrase, setPassphrase] = useState("");
   const [parsed, setParsed] = useState<ParsedBackup | null>(null);
   const [preview, setPreview] = useState<PreviewStats[] | null>(null);
@@ -51,6 +54,7 @@ export default function BackupPage() {
         includeAudio,
         includeKeys,
         passphrase: includeKeys ? passphrase : undefined,
+        categories: [...categories],
         deviceLabel: navigator.platform || "browser",
       });
       const date = new Date().toISOString().slice(0, 10);
@@ -145,14 +149,25 @@ export default function BackupPage() {
         }
       }
 
-      // Restore audio blobs into content rows
+      // Restore audio blobs into content rows.
+      // Filenames: audio/<id>.<ext> (single recording) or
+      // audio/<id>.<index>.<ext> (multi-turn synthesized audio).
       for (const [name, bytes] of Object.entries(parsed.audio)) {
-        const id = name.replace("audio/", "").replace(".webm", "");
+        const parts = name.replace("audio/", "").split(".");
+        const id = parts[0];
+        const ext = parts[parts.length - 1] ?? "webm";
+        const idx = parts.length === 3 ? Number(parts[1]) : undefined;
         const row = await getDb().content.get(id);
-        if (row) {
-          await getDb().content.update(id, {
-            audioBlob: new Blob([bytes.buffer as ArrayBuffer], { type: "audio/webm" }),
-          });
+        if (!row) continue;
+        const blob = new Blob([bytes.buffer as ArrayBuffer], {
+          type: ext === "wav" ? "audio/wav" : `audio/${ext}`,
+        });
+        if (idx === undefined) {
+          await getDb().content.update(id, { audioBlob: blob });
+        } else {
+          const arr = [...(row.audioBlobs ?? [])];
+          arr[idx] = blob;
+          await getDb().content.update(id, { audioBlobs: arr });
         }
       }
 
@@ -185,9 +200,27 @@ export default function BackupPage() {
       <Card>
         <h2 className="font-semibold">Export</h2>
         <div className="mt-3 space-y-2 text-sm">
-          <label className="flex items-center gap-2">
+          <p className="font-medium">What to include</p>
+          {ALL_CATEGORIES.map((c) => (
+            <label key={c} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={categories.has(c)}
+                onChange={(e) =>
+                  setCategories((s) => {
+                    const next = new Set(s);
+                    if (e.target.checked) next.add(c);
+                    else next.delete(c);
+                    return next;
+                  })
+                }
+              />
+              {CATEGORY_LABELS[c]}
+            </label>
+          ))}
+          <label className="flex items-center gap-2 pt-2">
             <input type="checkbox" checked={includeAudio} onChange={(e) => setIncludeAudio(e.target.checked)} />
-            Include speaking recordings (larger file)
+            Include audio (recordings + synthesized listening audio; larger file)
           </label>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={includeKeys} onChange={(e) => setIncludeKeys(e.target.checked)} />
@@ -202,9 +235,13 @@ export default function BackupPage() {
             />
           )}
         </div>
-        <Button className="mt-3" onClick={doExport} disabled={busy || (includeKeys && !passphrase)}>
+        <Button className="mt-3" onClick={doExport} disabled={busy || categories.size === 0 || (includeKeys && !passphrase)}>
           {busy ? <Spinner className="mr-2" /> : null}Download backup file
         </Button>
+        <p className="mt-2 text-xs text-zinc-500">
+          Import only applies the categories present in the file — partial
+          backups merge cleanly into existing data.
+        </p>
       </Card>
 
       <Card>

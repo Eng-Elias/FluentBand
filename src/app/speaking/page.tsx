@@ -1,10 +1,10 @@
 "use client";
 
-import { Suspense, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import type { CueCard, SpeakingFeedback } from "@/shared/schemas/speaking";
+import type { CueCard, SpeakingFeedback, SpeakingPart1 } from "@/shared/schemas/speaking";
 import { useProfile, useSettings, NoProviderError } from "@/core/settings";
-import { generateCueCard, generatePart1, generatePart3, makeGenCtx } from "@/features/content";
+import { generateCueCard, generatePart1, generatePart3, loadContent, makeGenCtx } from "@/features/content";
 import { gradeSpeaking, harvestCorrections, recordAttempt } from "@/features/grading";
 import { buildSpeakingGradePrompt } from "@/prompts/speaking";
 import { pickTopic } from "@/core/planner/topics";
@@ -12,7 +12,7 @@ import { getDb, stamp } from "@/core/db/db";
 import type { ContentItem } from "@/core/db/types";
 import { Recorder } from "@/core/speech/recorder";
 import { makeSTT, type Transcript } from "@/core/speech/stt";
-import { makeTTS, playBlob } from "@/core/speech/tts";
+import { getTTS, playBlob } from "@/core/speech/tts";
 import { computeFluency, shadowingScore, type FluencyMetrics } from "@/core/speech/metrics";
 import { Badge, Button, Card, Spinner, Textarea } from "@/components/ui/primitives";
 
@@ -54,6 +54,9 @@ function SpeakingInner() {
   const [roundMetrics, setRoundMetrics] = useState<FluencyMetrics[]>([]);
   const [shadowResult, setShadowResult] = useState<{ score: number; missed: string[] } | null>(null);
   const [feedback, setFeedback] = useState<SpeakingFeedback | null>(null);
+  const [ttsBusy, setTtsBusy] = useState(false);
+  const [p1Only, setP1Only] = useState(false);
+  const [contentId, setContentId] = useState<string | undefined>();
 
   const recorderRef = useRef<Recorder | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -78,13 +81,16 @@ function SpeakingInner() {
   }
 
   async function ttsSpeak(text: string) {
-    if (!settings) return;
+    if (!settings || ttsBusy) return;
+    setTtsBusy(true);
     try {
-      const tts = makeTTS(settings.speech);
+      const tts = getTTS(settings.speech);
       const blob = await tts.speak(text, { voice: settings.speech.voice, speed: settings.speech.speed });
       await playBlob(blob);
     } catch {
       /* TTS optional — question text is always visible */
+    } finally {
+      setTtsBusy(false);
     }
   }
 
@@ -145,11 +151,13 @@ function SpeakingInner() {
       const topic = pickTopic(seen);
       let p1Questions: string[] = [];
       if (mode === "full" || mode === "part23") {
-        const tasks: Promise<unknown>[] = [generateCueCard(topic, ctx)];
-        if (mode === "full") tasks.push(generatePart1(topic, ctx));
-        const [c, p1] = await Promise.all(tasks);
-        setCue(c as CueCard);
-        p1Questions = (p1 as { questions: string[] } | undefined)?.questions ?? [];
+        const [c, p1] = await Promise.all([
+          generateCueCard(topic, ctx),
+          mode === "full" ? generatePart1(topic, ctx) : Promise.resolve(undefined),
+        ]);
+        setCue(c.data);
+        setContentId(c.content.id);
+        p1Questions = p1?.data.questions ?? [];
         setPart1(p1Questions);
       }
       if (mode === "full") {
@@ -165,8 +173,7 @@ function SpeakingInner() {
         setPhase("drill");
       } else {
         // shadowing — generate a short text via vocab topic sentence
-        const ctx2 = ctx;
-        const pack = await generatePart1(topic, ctx2);
+        const { data: pack } = await generatePart1(topic, ctx);
         setShadowText(pack.questions.slice(0, 3).join(" "));
         setPhase("shadow");
       }
@@ -176,6 +183,36 @@ function SpeakingInner() {
     }
   }
 
+  // Deep link from the library: reopen a saved cue card or Part 1 set.
+  const contentParam = params.get("content");
+  useEffect(() => {
+    if (!contentParam) return;
+    let cancelled = false;
+    void loadContent(contentParam).then((item) => {
+      if (cancelled) return;
+      if (!item) {
+        setError("Saved exercise not found.");
+        return;
+      }
+      setContentId(item.id);
+      if (item.kind === "speaking.part2.cuecard") {
+        setMode("part23");
+        setCue(item.payload as CueCard);
+        setPhase("p2prep");
+        startTimer(60, () => setPhase("p2talk"));
+      } else if (item.kind === "speaking.part1") {
+        setMode("full");
+        setP1Only(true);
+        setPart1((item.payload as SpeakingPart1).questions);
+        setQIdx(0);
+        setPhase("p1");
+      } else {
+        setError("Saved exercise not found.");
+      }
+    });
+    return () => { cancelled = true; };
+  }, [contentParam]);
+
   async function answerPart1() {
     const blob = await stopRecording();
     if (!blob) return;
@@ -184,10 +221,12 @@ function SpeakingInner() {
     if (qIdx + 1 < part1.length) {
       setQIdx(qIdx + 1);
       void ttsSpeak(part1[qIdx + 1]);
+    } else if (p1Only || !cue) {
+      await finishGrade([...transcripts, t]);
     } else {
       setPhase("p2prep");
       startTimer(60, () => { setPhase("p2talk"); });
-      if (cue) void ttsSpeak(cue.description);
+      void ttsSpeak(cue.description);
     }
   }
 
@@ -240,7 +279,8 @@ function SpeakingInner() {
       setFeedback(fb);
       const attempt = await recordAttempt({
         skill: "speaking",
-        taskType: `part${mode === "full" ? "123" : "23"}`,
+        taskType: p1Only ? "part1" : `part${mode === "full" ? "123" : "23"}`,
+        promptId: contentId,
         promptSnapshot: cue ? `${cue.topic}: ${cue.description}` : "speaking test",
         input: text,
         result: fb,
@@ -337,6 +377,11 @@ function SpeakingInner() {
         <Card>
           <Badge tone="blue">Part 1</Badge>
           <p className="mt-3 text-lg font-medium">{part1[qIdx]}</p>
+          <div className="mt-2 flex items-center gap-2">
+            <Button size="sm" variant="ghost" disabled={ttsBusy} onClick={() => void ttsSpeak(part1[qIdx])}>
+              {ttsBusy ? "…" : "Replay question"}
+            </Button>
+          </div>
           <p className="text-xs text-zinc-500">Question {qIdx + 1} of {part1.length} — answer in 2–4 sentences.</p>
           <RecordControls recording={recording} onStart={() => { void startRecording(); startTimer(60, () => void answerPart1()); }} onStop={answerPart1} seconds={secondsLeft} />
         </Card>
@@ -368,6 +413,11 @@ function SpeakingInner() {
         <Card>
           <Badge tone="blue">Part 3</Badge>
           <p className="mt-3 text-lg font-medium">{part3[qIdx]}</p>
+          <div className="mt-2">
+            <Button size="sm" variant="ghost" disabled={ttsBusy} onClick={() => void ttsSpeak(part3[qIdx])}>
+              {ttsBusy ? "…" : "Replay question"}
+            </Button>
+          </div>
           <p className="text-xs text-zinc-500">Question {qIdx + 1} of {part3.length} — give a developed answer.</p>
           <RecordControls recording={recording} onStart={() => { void startRecording(); startTimer(90, () => void answerPart3()); }} onStop={answerPart3} seconds={secondsLeft} />
         </Card>
@@ -397,7 +447,9 @@ function SpeakingInner() {
           <p className="mt-3 text-sm">Listen, then repeat as exactly as you can:</p>
           <p className="mt-2 rounded bg-zinc-100 p-3 text-sm dark:bg-zinc-800">{shadowText}</p>
           <div className="mt-3 flex gap-2">
-            <Button variant="outline" onClick={() => void ttsSpeak(shadowText)}>Play</Button>
+            <Button variant="outline" disabled={ttsBusy} onClick={() => void ttsSpeak(shadowText)}>
+              {ttsBusy ? "Generating…" : "Play"}
+            </Button>
           </div>
           <RecordControls recording={recording} onStart={() => { void startRecording(); startTimer(60, () => void runShadow()); }} onStop={runShadow} seconds={secondsLeft} />
         </Card>

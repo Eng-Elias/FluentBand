@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useLiveQuery } from "dexie-react-hooks";
 import { getDb, now } from "@/core/db/db";
 import type { Card } from "@/core/db/types";
 import { addCard, dueCards, recordReview } from "@/core/srs/cards";
 import { useProfile, useSettings } from "@/core/settings";
-import { generateVocabPack, makeGenCtx, type GenCtx } from "@/features/content";
+import { generateVocabPack, loadContent, makeGenCtx, type GenCtx } from "@/features/content";
+import type { VocabPack } from "@/shared/schemas/vocab";
 import { pickTopic } from "@/core/planner/topics";
 import { Button, Card as CardUI, Input, Badge, Spinner } from "@/components/ui/primitives";
 import type { ReviewRating } from "@/core/srs/fsrs";
@@ -15,8 +17,17 @@ import { NoProviderError } from "@/core/settings";
 type Phase = "idle" | "reviewing" | "done";
 
 export default function VocabPage() {
+  return (
+    <Suspense fallback={<CardUI><Spinner className="mr-2" />Loading…</CardUI>}>
+      <VocabInner />
+    </Suspense>
+  );
+}
+
+function VocabInner() {
   const settings = useSettings();
   const profile = useProfile();
+  const params = useSearchParams();
   const [queue, setQueue] = useState<Card[]>([]);
   const [idx, setIdx] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -26,6 +37,8 @@ export default function VocabPage() {
   const [msg, setMsg] = useState("");
   const [manualFront, setManualFront] = useState("");
   const [manualBack, setManualBack] = useState("");
+  const [savedPack, setSavedPack] = useState<VocabPack | null>(null);
+  const contentParam = params.get("content");
   const cardCount = useLiveQuery(
     () => getDb().cards.filter((c) => !c.deletedAt).count(),
     [],
@@ -44,6 +57,45 @@ export default function VocabPage() {
     // defer to a microtask — setState happens after the await, not in-effect
     void Promise.resolve().then(() => loadQueue());
   }, [loadQueue]);
+
+  // Deep link from the library: show a previously generated pack.
+  useEffect(() => {
+    if (!contentParam) return;
+    let cancelled = false;
+    void loadContent(contentParam).then((item) => {
+      if (cancelled) return;
+      if (item?.kind === "vocab.pack") {
+        setSavedPack(item.payload as VocabPack);
+      } else {
+        setMsg("Saved pack not found.");
+      }
+    });
+    return () => { cancelled = true; };
+  }, [contentParam]);
+
+  async function addPackItems(pack: VocabPack) {
+    let added = 0;
+    for (const item of pack.items) {
+      const card = await addCard({
+        type: "collocation",
+        front: item.chunk,
+        back: `${item.meaning}\n\n${item.example}`,
+        example: item.example,
+        source: "vocab-pack",
+      });
+      if (card.createdAt > now() - 5000) added++;
+    }
+    return added;
+  }
+
+  async function addSavedPack() {
+    if (!savedPack) return;
+    setBusy(true);
+    const added = await addPackItems(savedPack);
+    setMsg(`Added ${added} new cards from "${savedPack.topic}".`);
+    setBusy(false);
+    await loadQueue();
+  }
 
   async function rate(r: ReviewRating) {
     const card = queue[idx];
@@ -83,17 +135,7 @@ export default function VocabPage() {
       const topic = pickTopic(seen);
       const ctx: GenCtx = makeGenCtx(settings, profile);
       const { data } = await generateVocabPack(topic, ctx);
-      let added = 0;
-      for (const item of data.items) {
-        const card = await addCard({
-          type: "collocation",
-          front: item.chunk,
-          back: `${item.meaning}\n\n${item.example}`,
-          example: item.example,
-          source: "vocab-pack",
-        });
-        if (card.createdAt > now() - 5000) added++;
-      }
+      const added = await addPackItems(data);
       setMsg(`Generated "${data.topic}" pack — ${data.items.length} items (${added} new cards).`);
       await loadQueue();
     } catch (e) {
@@ -168,6 +210,29 @@ export default function VocabPage() {
           <Button className="mt-4" variant="outline" onClick={loadQueue}>
             Re-check
           </Button>
+        </CardUI>
+      )}
+
+      {savedPack && (
+        <CardUI>
+          <h2 className="font-semibold">Saved pack: {savedPack.topic}</h2>
+          <ul className="mt-3 space-y-2 text-sm">
+            {savedPack.items.map((item, i) => (
+              <li key={i} className="rounded border border-zinc-200 p-2 dark:border-zinc-700">
+                <div className="font-medium">{item.chunk}</div>
+                <div className="text-zinc-600 dark:text-zinc-400">{item.meaning}</div>
+                <div className="text-xs text-zinc-500 italic">{item.example}</div>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex gap-2">
+            <Button size="sm" onClick={addSavedPack} disabled={busy}>
+              Add to SRS cards
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSavedPack(null)}>
+              Close
+            </Button>
+          </div>
         </CardUI>
       )}
 

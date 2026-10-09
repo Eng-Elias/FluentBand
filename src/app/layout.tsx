@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { WakePing } from "@/components/WakePing";
+import { ThemeSync } from "@/components/ThemeSync";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,6 +17,7 @@ const NAV = [
   ["Writing", "/writing"],
   ["Reading", "/reading"],
   ["Listening", "/listening"],
+  ["Library", "/library"],
   ["Errors", "/errors"],
   ["Progress", "/progress"],
   ["Mock Test", "/mock-test"],
@@ -50,6 +52,7 @@ export default function RootLayout({
         </header>
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">{children}</main>
         <WakePing />
+        <ThemeSync />
       </body>
     </html>
   );

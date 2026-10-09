@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { ReadingPassage, ReadingQuestion } from "@/shared/schemas/reading";
 import { useProfile, useSettings, NoProviderError } from "@/core/settings";
-import { generateReading, makeGenCtx } from "@/features/content";
+import { generateReading, loadContent, makeGenCtx } from "@/features/content";
 import { recordAttempt } from "@/features/grading";
 import { pickTopic } from "@/core/planner/topics";
 import { getDb } from "@/core/db/db";
@@ -45,17 +46,51 @@ function Highlight({ text, evidence }: { text: string; evidence?: string }) {
 }
 
 export default function ReadingPage() {
+  return (
+    <Suspense fallback={<Card><Spinner className="mr-2" />Loading…</Card>}>
+      <ReadingInner />
+    </Suspense>
+  );
+}
+
+function ReadingInner() {
   const settings = useSettings();
   const profile = useProfile();
+  const params = useSearchParams();
   const [phase, setPhase] = useState<Phase>("idle");
   const [data, setData] = useState<ReadingPassage | null>(null);
+  const [contentId, setContentId] = useState<string | undefined>();
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
   const [secondsLeft, setSecondsLeft] = useState(18 * 60);
   const [dropped] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const contentParam = params.get("content");
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+
+  // Deep link from the library: reopen a previously generated passage.
+  useEffect(() => {
+    if (!contentParam) return;
+    let cancelled = false;
+    void loadContent(contentParam).then((item) => {
+      if (cancelled) return;
+      if (!item || item.kind !== "reading.passage") {
+        setError("Saved passage not found.");
+        return;
+      }
+      setData(item.payload as ReadingPassage);
+      setContentId(item.id);
+      setAnswers({});
+      setSecondsLeft(18 * 60);
+      setPhase("reading");
+      timerRef.current = setInterval(
+        () => setSecondsLeft((s) => Math.max(0, s - 1)),
+        1000,
+      );
+    });
+    return () => { cancelled = true; };
+  }, [contentParam]);
 
   async function start() {
     setPhase("loading");
@@ -64,8 +99,9 @@ export default function ReadingPage() {
     try {
       const ctx = makeGenCtx(settings, profile);
       const seen = await getDb().topicsSeen.toArray();
-      const { data } = await generateReading(pickTopic(seen), ctx);
+      const { content, data } = await generateReading(pickTopic(seen), ctx);
       setData(data);
+      setContentId(content.id);
       setSecondsLeft(18 * 60);
       setPhase("reading");
       timerRef.current = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
@@ -83,6 +119,7 @@ export default function ReadingPage() {
     await recordAttempt({
       skill: "reading",
       taskType: "academic_passage",
+      promptId: contentId,
       promptSnapshot: `${data.title} (${data.topic})`,
       input: JSON.stringify(answers),
       result: { correct, total: data.questions.length },

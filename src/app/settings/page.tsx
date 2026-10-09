@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { getDb, newId, now, SINGLETON_SETTINGS_ID } from "@/core/db/db";
 import type { ProviderProfile, Settings } from "@/core/db/types";
 import { ensureSingletons, useSettings } from "@/core/settings";
-import { KOKORO_VOICES } from "@/core/speech/tts";
+import { getTTS, KOKORO_VOICES } from "@/core/speech/tts";
+import { makeSTT } from "@/core/speech/stt";
 import * as llm from "@/core/llm/client";
 import type { TestResult } from "@/shared/llm";
 import { Button, Card, Input, Select, Badge, Spinner } from "@/components/ui/primitives";
@@ -30,6 +31,29 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [msg, setMsg] = useState("");
+  const [modelDl, setModelDl] = useState<Record<string, string>>({});
+
+  async function downloadModel(which: "stt" | "tts") {
+    if (modelDl[which]) return;
+    const label = which === "stt" ? "Whisper STT" : "Kokoro TTS";
+    setModelDl((s) => ({ ...s, [which]: `Starting ${label}…` }));
+    try {
+      const cfg = settings!.speech;
+      const progress = (p: { loaded: number; total: number }) =>
+        setModelDl((s) => ({
+          ...s,
+          [which]:
+            p.total > 0
+              ? `Downloading ${label}… ${Math.round((p.loaded / p.total) * 100)}%`
+              : `Loading ${label}…`,
+        }));
+      if (which === "stt") await makeSTT(cfg).ensureReady(progress);
+      else await getTTS(cfg).ensureReady(progress);
+      setModelDl((s) => ({ ...s, [which]: `${label} ready` }));
+    } catch (e) {
+      setModelDl((s) => ({ ...s, [which]: `${label} failed: ${(e as Error).message}` }));
+    }
+  }
 
   useEffect(() => {
     ensureSingletons().catch(() => undefined);
@@ -306,6 +330,29 @@ export default function SettingsPage() {
               onChange={(e) => updateSpeech({ localServerUrl: e.target.value })}
             />
           </label>
+          <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+            <Button
+              size="sm" variant="outline"
+              disabled={!settings || settings.speech.sttProvider !== "whisper" || !!modelDl.stt}
+              onClick={() => void downloadModel("stt")}
+            >
+              Download STT model now
+            </Button>
+            <Button
+              size="sm" variant="outline"
+              disabled={!settings || settings.speech.ttsProvider !== "kokoro" || !!modelDl.tts}
+              onClick={() => void downloadModel("tts")}
+            >
+              Download TTS model now
+            </Button>
+            {modelDl.stt && <span className="text-xs text-zinc-500">{modelDl.stt}</span>}
+            {modelDl.tts && <span className="text-xs text-zinc-500">{modelDl.tts}</span>}
+          </div>
+          <p className="sm:col-span-2 text-xs text-zinc-500">
+            Models download once and are cached by the browser — pre-downloading
+            here means no wait on the practice page. Only shown providers are
+            downloaded (buttons disabled for Web Speech / local server).
+          </p>
         </div>
       </Card>
 
@@ -339,6 +386,24 @@ export default function SettingsPage() {
             />
             Cheaper mode (shorter content, fewer tokens)
           </label>
+          <label className="text-sm">
+            Theme
+            <Select
+              value={settings?.theme ?? "system"}
+              onChange={(e) =>
+                update({ theme: e.target.value as Settings["theme"] })
+              }
+            >
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </Select>
+          </label>
+          <div className="flex items-end">
+            <Link href="/diagnostic">
+              <Button size="sm" variant="outline">Take / retake diagnostic</Button>
+            </Link>
+          </div>
         </div>
       </Card>
 

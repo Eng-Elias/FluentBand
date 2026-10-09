@@ -114,7 +114,8 @@ export interface ContentItem extends Row {
   topic: string;
   level: string;
   payload: unknown;
-  audioBlob?: Blob;
+  audioBlob?: Blob; // single recording (speaking attempts)
+  audioBlobs?: Blob[]; // multi-turn audio (listening scripts)
   usedAt?: number;
 }
 

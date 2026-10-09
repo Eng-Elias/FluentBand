@@ -12,7 +12,7 @@ test("home renders and nav links work", async ({ page }) => {
 });
 
 test("all module pages render", async ({ page }) => {
-  for (const path of ["/today", "/vocab", "/speaking", "/writing", "/reading", "/listening", "/errors", "/progress", "/mock-test", "/diagnostic", "/settings/backup"]) {
+  for (const path of ["/today", "/vocab", "/speaking", "/writing", "/reading", "/listening", "/library", "/errors", "/progress", "/mock-test", "/diagnostic", "/settings/backup"]) {
     await page.goto(path);
     await expect(page.locator("h1").first()).toBeVisible();
   }
