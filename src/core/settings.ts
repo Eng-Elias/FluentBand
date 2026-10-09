@@ -26,6 +26,9 @@ export async function ensureSingletons(): Promise<{
   settings: Settings;
   profile: Profile;
 }> {
+  // Ask for persistent storage once — protects IndexedDB data *and* the
+  // speech-model cache (Cache API) from eviction under storage pressure.
+  void navigator.storage?.persist?.().catch(() => undefined);
   const db = getDb();
   let settings = await db.settings.get(SINGLETON_SETTINGS_ID);
   if (!settings) {
