@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
 import { getDb } from "@/core/db/db";
 import type { ContentItem } from "@/core/db/types";
 import { deleteContent } from "@/features/content";
 import { buildBackup } from "@/core/backup/export";
-import { playBlob } from "@/core/speech/tts";
+import { playBlob, stopPlayback } from "@/core/speech/tts";
 import { Badge, Button, Card, Input, Select, Spinner } from "@/components/ui/primitives";
 import { KIND_LABELS, titleOf } from "@/components/SavedContent";
 
@@ -32,6 +32,8 @@ export default function LibraryPage() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [playingId, setPlayingId] = useState<string | null>(null);
+
+  useEffect(() => () => stopPlayback(), []);
 
   const items = useLiveQuery(
     () =>

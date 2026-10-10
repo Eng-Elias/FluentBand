@@ -220,17 +220,29 @@ export function getTTS(cfg: {
   return tts;
 }
 
+let currentAudio: HTMLAudioElement | null = null;
+
+/** Stop all in-flight speech: HTMLAudio playback + speechSynthesis queue. */
+export function stopPlayback(): void {
+  currentAudio?.pause();
+  currentAudio = null;
+  if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
+}
+
 /** Play an audio blob; resolves when playback ends. */
 export function playBlob(blob: Blob): Promise<void> {
   if (blob.size === 0) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    currentAudio = audio;
     audio.onended = () => {
+      if (currentAudio === audio) currentAudio = null;
       URL.revokeObjectURL(url);
       resolve();
     };
     audio.onerror = () => {
+      if (currentAudio === audio) currentAudio = null;
       URL.revokeObjectURL(url);
       reject(new Error("Audio playback failed"));
     };

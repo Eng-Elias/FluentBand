@@ -12,7 +12,7 @@ import { getDb, stamp } from "@/core/db/db";
 import type { ContentItem } from "@/core/db/types";
 import { Recorder } from "@/core/speech/recorder";
 import { makeSTT, type Transcript } from "@/core/speech/stt";
-import { getTTS, playBlob } from "@/core/speech/tts";
+import { getTTS, playBlob, stopPlayback } from "@/core/speech/tts";
 import { computeFluency, shadowingScore, type FluencyMetrics } from "@/core/speech/metrics";
 import { Badge, Button, Card, Spinner, Textarea } from "@/components/ui/primitives";
 import { SavedContent } from "@/components/SavedContent";
@@ -61,6 +61,19 @@ function SpeakingInner() {
 
   const recorderRef = useRef<Recorder | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(
+    () => () => {
+      stopTimer();
+      stopPlayback();
+      try {
+        void recorderRef.current?.stop();
+      } catch {
+        /* wasn't recording */
+      }
+    },
+    [],
+  );
 
   function startTimer(secs: number, onDone?: () => void) {
     if (timerRef.current) clearInterval(timerRef.current);

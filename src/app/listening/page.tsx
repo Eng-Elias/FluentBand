@@ -11,7 +11,7 @@ import {
   saveContentAudio,
 } from "@/features/content";
 import { recordAttempt } from "@/features/grading";
-import { getTTS, playBlob } from "@/core/speech/tts";
+import { getTTS, playBlob, stopPlayback, type TTSProvider } from "@/core/speech/tts";
 import { pickTopic } from "@/core/planner/topics";
 import { getDb } from "@/core/db/db";
 import { Badge, Button, Card, Input, Spinner } from "@/components/ui/primitives";
@@ -42,7 +42,6 @@ function ListeningInner() {
   const [section, setSection] = useState(1);
   const [data, setData] = useState<ListeningScript | null>(null);
   const [contentId, setContentId] = useState<string | undefined>();
-  const [audioBlobs, setAudioBlobs] = useState<Blob[]>([]);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
@@ -50,9 +49,17 @@ function ListeningInner() {
   const [showTranscript, setShowTranscript] = useState(false);
   const audioQRef = useRef<Blob[]>([]);
   const stopRef = useRef(false);
+  const ttsRef = useRef<TTSProvider | null>(null);
+  const voiceMapRef = useRef<Map<string, string>>(new Map());
   const contentParam = params.get("content");
 
-  useEffect(() => () => { stopRef.current = true; }, []);
+  useEffect(
+    () => () => {
+      stopRef.current = true;
+      stopPlayback();
+    },
+    [],
+  );
 
   // Deep link from the library / saved-tests list: reopen a generated test.
   useEffect(() => {
@@ -92,7 +99,6 @@ function ListeningInner() {
     setShowTranscript(false);
     if (item.audioBlobs?.length) {
       audioQRef.current = item.audioBlobs;
-      setAudioBlobs(item.audioBlobs);
       setPhase("answering");
     } else {
       await synthesize(script, item.id);
@@ -101,8 +107,15 @@ function ListeningInner() {
 
   async function synthesize(script: ListeningScript, id?: string) {
     setPhase("preparing-audio");
-    setProgress("Loading TTS model…");
     const tts = getTTS(settings!.speech);
+    ttsRef.current = tts;
+    setProgress(
+      tts.id === "kokoro"
+        ? "Loading TTS model…"
+        : tts.id === "local-server"
+          ? "Checking local speech server…"
+          : "Preparing audio…",
+    );
     await tts.ensureReady((p) =>
       setProgress(
         p.total > 0
@@ -110,23 +123,29 @@ function ListeningInner() {
           : "Loading TTS model…",
       ),
     );
-    const voiceOf = new Map(
+    voiceMapRef.current = new Map(
       script.speakers.map((s, i) => [s, SPEAKER_VOICES[i % SPEAKER_VOICES.length]]),
     );
+    if (tts.id === "webspeech") {
+      // Web Speech can't synthesize to a Blob — it speaks live on Play.
+      audioQRef.current = [];
+      setPhase("answering");
+      setProgress("");
+      return;
+    }
     const blobs: Blob[] = [];
     for (let i = 0; i < script.script.length; i++) {
       const turn = script.script[i];
       setProgress(`Synthesizing audio ${i + 1}/${script.script.length}…`);
       blobs.push(
         await tts.speak(turn.text, {
-          voice: voiceOf.get(turn.speaker) ?? SPEAKER_VOICES[0],
+          voice: voiceMapRef.current.get(turn.speaker) ?? SPEAKER_VOICES[0],
           speed: settings!.speech.speed,
         }),
       );
     }
     if (id) await saveContentAudio(id, blobs).catch(() => undefined);
     audioQRef.current = blobs;
-    setAudioBlobs(blobs);
     setPhase("answering");
     setProgress("");
   }
@@ -149,19 +168,33 @@ function ListeningInner() {
     }
   }
 
-  async function playAll(once = true) {
+  async function playAll() {
     setPlaying(true);
     stopRef.current = false;
-    for (const b of audioQRef.current) {
-      if (stopRef.current) break;
-      try {
-        await playBlob(b);
-      } catch {
-        /* web speech fallback already played */
+    if (ttsRef.current?.id === "webspeech" && data) {
+      // Live playback: each speak() resolves when the utterance ends.
+      for (const turn of data.script) {
+        if (stopRef.current) break;
+        try {
+          await ttsRef.current.speak(turn.text, {
+            voice: voiceMapRef.current.get(turn.speaker) ?? SPEAKER_VOICES[0],
+            speed: settings!.speech.speed,
+          });
+        } catch {
+          break; // cancelled or errored
+        }
+      }
+    } else {
+      for (const b of audioQRef.current) {
+        if (stopRef.current) break;
+        try {
+          await playBlob(b);
+        } catch {
+          /* skip broken turn */
+        }
       }
     }
     setPlaying(false);
-    void once;
   }
 
   function isCorrect(i: number): boolean {
@@ -231,14 +264,23 @@ function ListeningInner() {
           <Card>
             <h2 className="font-semibold">{data.title}</h2>
             <p className="text-xs text-zinc-500">
-              Section {data.section} · {data.speakers.join(", ")} · {audioBlobs.length} turns
+              Section {data.section} · {data.speakers.join(", ")} · {data.script.length} turns
+              {ttsRef.current?.id === "webspeech" ? " · live voices (browser)" : ""}
             </p>
             <div className="mt-3 flex gap-2">
               <Button onClick={() => playAll()} disabled={playing}>
                 {playing ? "Playing…" : phase === "review" ? "Replay" : "Play audio"}
               </Button>
               {playing && (
-                <Button variant="outline" onClick={() => { stopRef.current = true; }}>Stop</Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    stopRef.current = true;
+                    stopPlayback();
+                  }}
+                >
+                  Stop
+                </Button>
               )}
             </div>
             <p className="mt-2 text-xs text-zinc-500">
