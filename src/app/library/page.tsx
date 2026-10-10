@@ -9,17 +9,7 @@ import { deleteContent } from "@/features/content";
 import { buildBackup } from "@/core/backup/export";
 import { playBlob } from "@/core/speech/tts";
 import { Badge, Button, Card, Input, Select, Spinner } from "@/components/ui/primitives";
-
-const KIND_LABELS: Record<string, string> = {
-  "reading.passage": "Reading",
-  "listening.script": "Listening",
-  "writing.task1.chart": "Writing T1",
-  "writing.task2.prompt": "Writing T2",
-  "vocab.pack": "Vocab pack",
-  "speaking.part2.cuecard": "Speaking P2",
-  "speaking.part1": "Speaking P1",
-  recording: "Recording",
-};
+import { KIND_LABELS, titleOf } from "@/components/SavedContent";
 
 const KIND_ROUTES: Record<string, (id: string) => string> = {
   "reading.passage": (id) => `/reading?content=${id}`,
@@ -30,22 +20,6 @@ const KIND_ROUTES: Record<string, (id: string) => string> = {
   "speaking.part2.cuecard": (id) => `/speaking?content=${id}`,
   "speaking.part1": (id) => `/speaking?content=${id}`,
 };
-
-function truncate(s: string, n = 110): string {
-  return s.length > n ? s.slice(0, n) + "…" : s;
-}
-
-/** Human-readable title for a saved item's payload. */
-function titleOf(item: ContentItem): string {
-  const p = item.payload as Record<string, unknown> | null;
-  if (!p || typeof p !== "object") return item.topic || item.kind;
-  if (typeof p.title === "string") return p.title;
-  if (typeof p.description === "string") return truncate(p.description);
-  if (typeof p.prompt === "string") return truncate(p.prompt);
-  if (Array.isArray(p.questions)) return `${item.topic} — ${p.questions.length} questions`;
-  if (Array.isArray(p.items)) return `${item.topic} — ${p.items.length} items`;
-  return item.topic || item.kind;
-}
 
 function searchText(item: ContentItem): string {
   return `${item.kind} ${item.topic} ${titleOf(item)} ${JSON.stringify(item.payload)}`.toLowerCase();

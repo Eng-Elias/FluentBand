@@ -9,6 +9,8 @@ import { recordAttempt } from "@/features/grading";
 import { pickTopic } from "@/core/planner/topics";
 import { getDb } from "@/core/db/db";
 import { Badge, Button, Card, Input, Spinner } from "@/components/ui/primitives";
+import { SavedContent } from "@/components/SavedContent";
+import type { ContentItem } from "@/core/db/types";
 
 type Phase = "idle" | "loading" | "reading" | "review";
 
@@ -69,7 +71,7 @@ function ReadingInner() {
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
-  // Deep link from the library: reopen a previously generated passage.
+  // Deep link from the library / saved-tests list: reopen a generated passage.
   useEffect(() => {
     if (!contentParam) return;
     let cancelled = false;
@@ -79,18 +81,25 @@ function ReadingInner() {
         setError("Saved passage not found.");
         return;
       }
-      setData(item.payload as ReadingPassage);
-      setContentId(item.id);
-      setAnswers({});
-      setSecondsLeft(18 * 60);
-      setPhase("reading");
-      timerRef.current = setInterval(
-        () => setSecondsLeft((s) => Math.max(0, s - 1)),
-        1000,
-      );
+      openItem(item);
     });
     return () => { cancelled = true; };
+     
   }, [contentParam]);
+
+  function openItem(item: ContentItem) {
+    setData(item.payload as ReadingPassage);
+    setContentId(item.id);
+    setAnswers({});
+    setError("");
+    setSecondsLeft(18 * 60);
+    setPhase("reading");
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(
+      () => setSecondsLeft((s) => Math.max(0, s - 1)),
+      1000,
+    );
+  }
 
   async function start() {
     setPhase("loading");
@@ -151,6 +160,14 @@ function ReadingInner() {
           <Button className="mt-4" onClick={start}>Generate passage</Button>
           {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         </Card>
+      )}
+
+      {phase === "idle" && (
+        <SavedContent
+          kinds={["reading.passage"]}
+          title="Your reading passages"
+          onOpen={openItem}
+        />
       )}
 
       {phase === "loading" && <Card><Spinner className="mr-2" />Writing your passage…</Card>}

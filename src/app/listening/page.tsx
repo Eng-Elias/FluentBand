@@ -15,6 +15,8 @@ import { getTTS, playBlob } from "@/core/speech/tts";
 import { pickTopic } from "@/core/planner/topics";
 import { getDb } from "@/core/db/db";
 import { Badge, Button, Card, Input, Spinner } from "@/components/ui/primitives";
+import { SavedContent } from "@/components/SavedContent";
+import type { ContentItem } from "@/core/db/types";
 
 type Phase = "idle" | "loading" | "preparing-audio" | "playing" | "answering" | "review";
 
@@ -52,7 +54,7 @@ function ListeningInner() {
 
   useEffect(() => () => { stopRef.current = true; }, []);
 
-  // Deep link from the library: reopen a previously generated test.
+  // Deep link from the library / saved-tests list: reopen a generated test.
   useEffect(() => {
     if (!contentParam) return;
     let cancelled = false;
@@ -61,21 +63,12 @@ function ListeningInner() {
       setError("");
       const item = await loadContent(contentParam);
       if (cancelled) return;
-      if (!item || item.kind !== "listening.script") {
+      if (!item) {
         setError("Saved test not found.");
         setPhase("idle");
         return;
       }
-      const script = item.payload as ListeningScript;
-      setData(script);
-      setContentId(item.id);
-      if (item.audioBlobs?.length) {
-        audioQRef.current = item.audioBlobs;
-        setAudioBlobs(item.audioBlobs);
-        setPhase("answering");
-      } else {
-        await synthesize(script, item.id);
-      }
+      await openItem(item);
     })().catch((e) => {
       if (!cancelled) {
         setError((e as Error).message);
@@ -85,6 +78,26 @@ function ListeningInner() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentParam, settings]);
+
+  async function openItem(item: ContentItem) {
+    if (item.kind !== "listening.script") {
+      setError("Saved test not found.");
+      setPhase("idle");
+      return;
+    }
+    const script = item.payload as ListeningScript;
+    setData(script);
+    setContentId(item.id);
+    setAnswers({});
+    setShowTranscript(false);
+    if (item.audioBlobs?.length) {
+      audioQRef.current = item.audioBlobs;
+      setAudioBlobs(item.audioBlobs);
+      setPhase("answering");
+    } else {
+      await synthesize(script, item.id);
+    }
+  }
 
   async function synthesize(script: ListeningScript, id?: string) {
     setPhase("preparing-audio");
@@ -199,6 +212,14 @@ function ListeningInner() {
           <Button className="mt-4" onClick={start}>Generate listening test</Button>
           {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         </Card>
+      )}
+
+      {phase === "idle" && (
+        <SavedContent
+          kinds={["listening.script"]}
+          title="Your listening tests"
+          onOpen={(item) => void openItem(item)}
+        />
       )}
 
       {(phase === "loading" || phase === "preparing-audio") && (

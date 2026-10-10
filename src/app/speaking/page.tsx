@@ -15,6 +15,7 @@ import { makeSTT, type Transcript } from "@/core/speech/stt";
 import { getTTS, playBlob } from "@/core/speech/tts";
 import { computeFluency, shadowingScore, type FluencyMetrics } from "@/core/speech/metrics";
 import { Badge, Button, Card, Spinner, Textarea } from "@/components/ui/primitives";
+import { SavedContent } from "@/components/SavedContent";
 
 type Mode = "full" | "part23" | "drill" | "shadowing";
 type Phase =
@@ -183,7 +184,7 @@ function SpeakingInner() {
     }
   }
 
-  // Deep link from the library: reopen a saved cue card or Part 1 set.
+  // Deep link from the library / saved-tests list: reopen a saved cue card or Part 1 set.
   const contentParam = params.get("content");
   useEffect(() => {
     if (!contentParam) return;
@@ -194,24 +195,33 @@ function SpeakingInner() {
         setError("Saved exercise not found.");
         return;
       }
-      setContentId(item.id);
-      if (item.kind === "speaking.part2.cuecard") {
-        setMode("part23");
-        setCue(item.payload as CueCard);
-        setPhase("p2prep");
-        startTimer(60, () => setPhase("p2talk"));
-      } else if (item.kind === "speaking.part1") {
-        setMode("full");
-        setP1Only(true);
-        setPart1((item.payload as SpeakingPart1).questions);
-        setQIdx(0);
-        setPhase("p1");
-      } else {
-        setError("Saved exercise not found.");
-      }
+      openItem(item);
     });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentParam]);
+
+  function openItem(item: ContentItem) {
+    setContentId(item.id);
+    setError("");
+    setTranscripts([]);
+    setFeedback(null);
+    if (item.kind === "speaking.part2.cuecard") {
+      setMode("part23");
+      setP1Only(false);
+      setCue(item.payload as CueCard);
+      setPhase("p2prep");
+      startTimer(60, () => setPhase("p2talk"));
+    } else if (item.kind === "speaking.part1") {
+      setMode("full");
+      setP1Only(true);
+      setPart1((item.payload as SpeakingPart1).questions);
+      setQIdx(0);
+      setPhase("p1");
+    } else {
+      setError("Saved exercise not found.");
+    }
+  }
 
   async function answerPart1() {
     const blob = await stopRecording();
@@ -367,6 +377,14 @@ function SpeakingInner() {
           <Button className="mt-4" onClick={startTest}>Start</Button>
           {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         </Card>
+      )}
+
+      {phase === "pick" && (
+        <SavedContent
+          kinds={["speaking.part2.cuecard", "speaking.part1"]}
+          title="Your speaking exercises"
+          onOpen={openItem}
+        />
       )}
 
       {(phase === "loading" || phase === "model" || phase === "grading") && (

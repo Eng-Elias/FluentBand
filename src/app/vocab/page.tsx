@@ -11,6 +11,7 @@ import { generateVocabPack, loadContent, makeGenCtx, type GenCtx } from "@/featu
 import type { VocabPack } from "@/shared/schemas/vocab";
 import { pickTopic } from "@/core/planner/topics";
 import { Button, Card as CardUI, Input, Badge, Spinner } from "@/components/ui/primitives";
+import { SavedContent } from "@/components/SavedContent";
 import type { ReviewRating } from "@/core/srs/fsrs";
 import { NoProviderError } from "@/core/settings";
 
@@ -58,7 +59,7 @@ function VocabInner() {
     void Promise.resolve().then(() => loadQueue());
   }, [loadQueue]);
 
-  // Deep link from the library: show a previously generated pack.
+  // Deep link from the library / saved list: show a previously generated pack.
   useEffect(() => {
     if (!contentParam) return;
     let cancelled = false;
@@ -235,6 +236,12 @@ function VocabInner() {
           </div>
         </CardUI>
       )}
+
+      <SavedContent
+        kinds={["vocab.pack"]}
+        title="Your vocab packs"
+        onOpen={(item) => setSavedPack(item.payload as VocabPack)}
+      />
 
       <CardUI>
         <h2 className="font-semibold">Generate a vocab pack</h2>

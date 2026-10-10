@@ -11,6 +11,8 @@ import { pickTopic } from "@/core/planner/topics";
 import { getDb } from "@/core/db/db";
 import { ChartSVG } from "@/components/ChartSVG";
 import { Badge, Button, Card, Spinner, Textarea } from "@/components/ui/primitives";
+import { SavedContent } from "@/components/SavedContent";
+import type { ContentItem } from "@/core/db/types";
 
 type TaskKind = "t1" | "t2";
 type Phase = "pick" | "loading" | "writing" | "grading" | "feedback";
@@ -50,7 +52,7 @@ function WritingInner() {
     };
   }, []);
 
-  // Deep link from the library: reopen a saved task.
+  // Deep link from the library / saved-tests list: reopen a saved task.
   useEffect(() => {
     if (!contentParam) return;
     let cancelled = false;
@@ -60,30 +62,36 @@ function WritingInner() {
         setError("Saved task not found.");
         return;
       }
-      if (item.kind === "writing.task1.chart") {
-        setTask("t1");
-        setT1(item.payload as ChartData);
-      } else if (item.kind === "writing.task2.prompt") {
-        setTask("t2");
-        setT2(item.payload as Task2Prompt);
-      } else {
-        setError("Saved task not found.");
-        return;
-      }
-      setContentId(item.id);
-      setEssay("");
-      setFeedback(null);
-      setAttempts([]);
-      setSecondsLeft(item.kind === "writing.task1.chart" ? 20 * 60 : 40 * 60);
-      setPhase("writing");
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = setInterval(
-        () => setSecondsLeft((s) => Math.max(0, s - 1)),
-        1000,
-      );
+      openItem(item);
     });
     return () => { cancelled = true; };
+     
   }, [contentParam]);
+
+  function openItem(item: ContentItem) {
+    if (item.kind === "writing.task1.chart") {
+      setTask("t1");
+      setT1(item.payload as ChartData);
+    } else if (item.kind === "writing.task2.prompt") {
+      setTask("t2");
+      setT2(item.payload as Task2Prompt);
+    } else {
+      setError("Saved task not found.");
+      return;
+    }
+    setContentId(item.id);
+    setEssay("");
+    setFeedback(null);
+    setAttempts([]);
+    setError("");
+    setSecondsLeft(item.kind === "writing.task1.chart" ? 20 * 60 : 40 * 60);
+    setPhase("writing");
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(
+      () => setSecondsLeft((s) => Math.max(0, s - 1)),
+      1000,
+    );
+  }
 
   async function start() {
     setPhase("loading");
@@ -176,6 +184,14 @@ function WritingInner() {
           <Button className="mt-4" onClick={start}>Generate task</Button>
           {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         </Card>
+      )}
+
+      {phase === "pick" && (
+        <SavedContent
+          kinds={["writing.task1.chart", "writing.task2.prompt"]}
+          title="Your writing tasks"
+          onOpen={openItem}
+        />
       )}
 
       {phase === "loading" && (
