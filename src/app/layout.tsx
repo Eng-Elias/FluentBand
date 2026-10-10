@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import Link from "next/link";
+import { NavLinks } from "@/components/NavLinks";
 import { WakePing } from "@/components/WakePing";
 import { ThemeSync } from "@/components/ThemeSync";
 import "./globals.css";
@@ -47,17 +48,7 @@ export default function RootLayout({
             <Link href="/" className="text-lg font-bold tracking-tight">
               FluentBand
             </Link>
-            <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-              {NAV.map(([label, href]) => (
-                <Link
-                  key={href}
-                  href={href}
-                  className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-                >
-                  {label}
-                </Link>
-              ))}
-            </nav>
+            <NavLinks items={NAV} />
           </div>
         </header>
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">

@@ -52,6 +52,16 @@ function WritingInner() {
     };
   }, []);
 
+  // Clicking the "Writing" nav link while on this page → back to the list.
+  useEffect(() => {
+    const h = () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      setPhase("pick");
+    };
+    window.addEventListener("fluentband:reset-page", h);
+    return () => window.removeEventListener("fluentband:reset-page", h);
+  }, []);
+
   // Deep link from the library / saved-tests list: reopen a saved task.
   useEffect(() => {
     if (!contentParam) return;
@@ -164,7 +174,20 @@ function WritingInner() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Writing Practice</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Writing Practice</h1>
+        {phase !== "pick" && phase !== "loading" && (
+          <Button
+            size="sm" variant="ghost"
+            onClick={() => {
+              if (timerRef.current) clearInterval(timerRef.current);
+              setPhase("pick");
+            }}
+          >
+            ← Tasks
+          </Button>
+        )}
+      </div>
 
       {phase === "pick" && (
         <Card>

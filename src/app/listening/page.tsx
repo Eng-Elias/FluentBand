@@ -61,6 +61,18 @@ function ListeningInner() {
     [],
   );
 
+  // Clicking the "Listening" nav link while on this page → back to the list.
+  useEffect(() => {
+    const h = () => {
+      stopRef.current = true;
+      stopPlayback();
+      setPhase("idle");
+      setData(null);
+    };
+    window.addEventListener("fluentband:reset-page", h);
+    return () => window.removeEventListener("fluentband:reset-page", h);
+  }, []);
+
   // Deep link from the library / saved-tests list: reopen a generated test.
   useEffect(() => {
     if (!contentParam) return;
@@ -224,7 +236,22 @@ function ListeningInner() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Listening Practice</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Listening Practice</h1>
+        {(phase === "answering" || phase === "review") && (
+          <Button
+            size="sm" variant="ghost"
+            onClick={() => {
+              stopRef.current = true;
+              stopPlayback();
+              setPhase("idle");
+              setData(null);
+            }}
+          >
+            ← Tests
+          </Button>
+        )}
+      </div>
 
       {phase === "idle" && (
         <Card>

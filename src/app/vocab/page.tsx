@@ -74,6 +74,13 @@ function VocabInner() {
     return () => { cancelled = true; };
   }, [contentParam]);
 
+  // Clicking the "Vocab" nav link while on this page → close the open pack.
+  useEffect(() => {
+    const h = () => setSavedPack(null);
+    window.addEventListener("fluentband:reset-page", h);
+    return () => window.removeEventListener("fluentband:reset-page", h);
+  }, []);
+
   async function addPackItems(pack: VocabPack) {
     let added = 0;
     for (const item of pack.items) {

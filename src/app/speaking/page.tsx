@@ -75,6 +75,17 @@ function SpeakingInner() {
     [],
   );
 
+  // Clicking the "Speaking" nav link while on this page → back to the list.
+  useEffect(() => {
+    const h = () => {
+      stopTimer();
+      stopPlayback();
+      setPhase("pick");
+    };
+    window.addEventListener("fluentband:reset-page", h);
+    return () => window.removeEventListener("fluentband:reset-page", h);
+  }, []);
+
   function startTimer(secs: number, onDone?: () => void) {
     if (timerRef.current) clearInterval(timerRef.current);
     setSecondsLeft(secs);
@@ -372,7 +383,21 @@ function SpeakingInner() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Speaking Practice</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Speaking Practice</h1>
+        {phase !== "pick" && phase !== "loading" && (
+          <Button
+            size="sm" variant="ghost"
+            onClick={() => {
+              stopTimer();
+              stopPlayback();
+              setPhase("pick");
+            }}
+          >
+            ← Exercises
+          </Button>
+        )}
+      </div>
 
       {phase === "pick" && (
         <Card>

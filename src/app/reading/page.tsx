@@ -71,6 +71,17 @@ function ReadingInner() {
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
+  // Clicking the "Reading" nav link while on this page → back to the list.
+  useEffect(() => {
+    const h = () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      setPhase("idle");
+      setData(null);
+    };
+    window.addEventListener("fluentband:reset-page", h);
+    return () => window.removeEventListener("fluentband:reset-page", h);
+  }, []);
+
   // Deep link from the library / saved-tests list: reopen a generated passage.
   useEffect(() => {
     if (!contentParam) return;
@@ -147,7 +158,21 @@ function ReadingInner() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Reading Practice</h1>
-        {phase === "reading" && <Badge tone={secondsLeft < 120 ? "red" : "default"}>{fmt(secondsLeft)}</Badge>}
+        <div className="flex items-center gap-2">
+          {phase === "reading" && <Badge tone={secondsLeft < 120 ? "red" : "default"}>{fmt(secondsLeft)}</Badge>}
+          {(phase === "reading" || phase === "review") && (
+            <Button
+              size="sm" variant="ghost"
+              onClick={() => {
+                if (timerRef.current) clearInterval(timerRef.current);
+                setPhase("idle");
+                setData(null);
+              }}
+            >
+              ← Passages
+            </Button>
+          )}
+        </div>
       </div>
 
       {phase === "idle" && (
