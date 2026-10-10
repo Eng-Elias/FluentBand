@@ -6,6 +6,12 @@ import type { ProviderProfile, Settings } from "@/core/db/types";
 import { ensureSingletons, useSettings } from "@/core/settings";
 import { getTTS, KOKORO_VOICES } from "@/core/speech/tts";
 import { makeSTT } from "@/core/speech/stt";
+import {
+  MODEL_IDS,
+  clearModelCache,
+  formatBytes,
+  modelCacheInfo,
+} from "@/core/speech/modelCache";
 import * as llm from "@/core/llm/client";
 import type { TestResult } from "@/shared/llm";
 import { Button, Card, Input, Select, Badge, Spinner } from "@/components/ui/primitives";
@@ -32,10 +38,63 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [msg, setMsg] = useState("");
   const [modelDl, setModelDl] = useState<Record<string, string>>({});
+  const [modelStatus, setModelStatus] = useState<
+    Partial<Record<"stt" | "tts", { installed: boolean; bytes: number }>>
+  >({});
+
+  function modelId(which: "stt" | "tts"): string {
+    return which === "tts"
+      ? MODEL_IDS.tts
+      : MODEL_IDS.stt(settings?.speech.whisperModel ?? "tiny.en");
+  }
+
+  async function refreshModelStatus() {
+    if (!settings) return;
+    if (typeof caches === "undefined") return;
+    const next: typeof modelStatus = { stt: undefined, tts: undefined };
+    if (settings.speech.sttProvider === "whisper") {
+      const info = await modelCacheInfo(modelId("stt"));
+      next.stt = { installed: info.hasWeights, bytes: info.bytes };
+    }
+    if (settings.speech.ttsProvider === "kokoro") {
+      const info = await modelCacheInfo(modelId("tts"));
+      next.tts = { installed: info.hasWeights, bytes: info.bytes };
+    }
+    setModelStatus(next);
+  }
+
+  useEffect(() => {
+    void refreshModelStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.speech.whisperModel, settings?.speech.sttProvider, settings?.speech.ttsProvider]);
 
   async function downloadModel(which: "stt" | "tts") {
     if (modelDl[which]) return;
     const label = which === "stt" ? "Whisper STT" : "Kokoro TTS";
+    const id = modelId(which);
+
+    // Check whether it's already cached first
+    setModelDl((s) => ({ ...s, [which]: "Checking…" }));
+    const info = await modelCacheInfo(id);
+    if (info.hasWeights) {
+      const ok = window.confirm(
+        `${label} is already downloaded (${formatBytes(info.bytes)}).\n\nDownload it again?`,
+      );
+      if (!ok) {
+        setModelDl((s) => ({ ...s, [which]: `${label} already installed` }));
+        setTimeout(() => setModelDl((s) => ({ ...s, [which]: "" })), 4000);
+        return;
+      }
+      await clearModelCache(id);
+    } else if (
+      !window.confirm(
+        `Download the ${label} model now?\n\nIt is stored in this browser's cache for offline use.`,
+      )
+    ) {
+      setModelDl((s) => ({ ...s, [which]: "" }));
+      return;
+    }
+
     setModelDl((s) => ({ ...s, [which]: `Starting ${label}…` }));
     try {
       const cfg = settings!.speech;
@@ -50,6 +109,7 @@ export default function SettingsPage() {
       if (which === "stt") await makeSTT(cfg).ensureReady(progress);
       else await getTTS(cfg).ensureReady(progress);
       setModelDl((s) => ({ ...s, [which]: `${label} ready` }));
+      void refreshModelStatus();
     } catch (e) {
       setModelDl((s) => ({ ...s, [which]: `${label} failed: ${(e as Error).message}` }));
     }
@@ -336,15 +396,29 @@ export default function SettingsPage() {
               disabled={!settings || settings.speech.sttProvider !== "whisper" || !!modelDl.stt}
               onClick={() => void downloadModel("stt")}
             >
-              Download STT model now
+              {modelStatus.stt?.installed ? "Re-download STT model" : "Download STT model now"}
             </Button>
+            {modelStatus.stt && (
+              <Badge tone={modelStatus.stt.installed ? "green" : "amber"}>
+                {modelStatus.stt.installed
+                  ? `STT installed (${formatBytes(modelStatus.stt.bytes)})`
+                  : "STT not downloaded"}
+              </Badge>
+            )}
             <Button
               size="sm" variant="outline"
               disabled={!settings || settings.speech.ttsProvider !== "kokoro" || !!modelDl.tts}
               onClick={() => void downloadModel("tts")}
             >
-              Download TTS model now
+              {modelStatus.tts?.installed ? "Re-download TTS model" : "Download TTS model now"}
             </Button>
+            {modelStatus.tts && (
+              <Badge tone={modelStatus.tts.installed ? "green" : "amber"}>
+                {modelStatus.tts.installed
+                  ? `TTS installed (${formatBytes(modelStatus.tts.bytes)})`
+                  : "TTS not downloaded"}
+              </Badge>
+            )}
             {modelDl.stt && <span className="text-xs text-zinc-500">{modelDl.stt}</span>}
             {modelDl.tts && <span className="text-xs text-zinc-500">{modelDl.tts}</span>}
           </div>
