@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
+import { connection } from "next/server";
 import Link from "next/link";
 import { WakePing } from "@/components/WakePing";
 import { ThemeSync } from "@/components/ThemeSync";
@@ -23,6 +25,14 @@ const NAV = [
   ["Mock Test", "/mock-test"],
   ["Settings", "/settings"],
 ] as const;
+
+// Opt page content out of prerendering → dynamic routes aren't held in the
+// client router cache, so revisiting a practice page remounts fresh state
+// (a finished test can't resurrect). This app renders client-side anyway.
+async function RequestBoundary({ children }: { children: React.ReactNode }) {
+  await connection();
+  return <>{children}</>;
+}
 
 export default function RootLayout({
   children,
@@ -50,7 +60,11 @@ export default function RootLayout({
             </nav>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">{children}</main>
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+          <Suspense fallback={null}>
+            <RequestBoundary>{children}</RequestBoundary>
+          </Suspense>
+        </main>
         <WakePing />
         <ThemeSync />
       </body>

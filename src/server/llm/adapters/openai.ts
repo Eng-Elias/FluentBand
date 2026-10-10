@@ -83,9 +83,25 @@ async function* streamEvents(
   if (!doneEmitted) yield done();
 }
 
+/** Normalize message content: plain string or OpenAI-style text parts. */
+function contentText(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) =>
+        p && typeof p === "object" && (p as Record<string, unknown>).type === "text"
+          ? String((p as Record<string, unknown>).text ?? "")
+          : "",
+      )
+      .join("");
+  }
+  return undefined;
+}
+
 async function chatOnce(
   req: AdapterRequest,
   omit: ReadonlySet<string>,
+  boosted = false,
 ): Promise<AdapterResult> {
   const res = await upstreamRequest({
     validated: req.validated,
@@ -125,10 +141,44 @@ async function chatOnce(
   } catch {
     throw new GatewayError("upstream_error", "Provider returned non-JSON", 502);
   }
-  const choices = json.choices as { message?: { content?: string } }[] | undefined;
-  const content = choices?.[0]?.message?.content;
-  if (typeof content !== "string") {
-    throw new GatewayError("upstream_error", "Provider response missing content", 502);
+  const choice = (
+    json.choices as
+      | {
+          message?: { content?: unknown; refusal?: unknown; reasoning_content?: unknown };
+          finish_reason?: string;
+        }[]
+      | undefined
+  )?.[0];
+  const msg = choice?.message;
+  const refusal = msg?.refusal;
+  if (typeof refusal === "string" && refusal) {
+    throw new GatewayError("upstream_error", `Provider refused: ${refusal.slice(0, 300)}`, 502);
+  }
+  const content = contentText(msg?.content);
+  if (!content) {
+    const finish = choice?.finish_reason;
+    // Reasoning models (mimo, o-series, deepseek-r1) burn max_tokens on
+    // thinking and return empty content with finish_reason "length" —
+    // retry once with a bigger budget.
+    const sent = req.params?.maxTokens;
+    if (finish === "length" && !boosted && typeof sent === "number" && sent < 16384) {
+      return chatOnce(
+        { ...req, params: { ...req.params, maxTokens: Math.min(sent * 2, 16384) } },
+        omit,
+        true,
+      );
+    }
+    const details: string[] = [];
+    if (finish) details.push(`finish_reason=${finish}`);
+    if (typeof msg?.reasoning_content === "string" && msg.reasoning_content) {
+      details.push("reasoning_content only");
+    }
+    if (!choice) details.push(`body: ${body.slice(0, 160)}`);
+    throw new GatewayError(
+      "upstream_error",
+      `Provider response missing content${details.length ? ` (${details.join("; ")})` : ""}`,
+      502,
+    );
   }
   const usage = json.usage as
     | { prompt_tokens?: number; completion_tokens?: number }

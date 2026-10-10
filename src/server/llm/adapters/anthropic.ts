@@ -90,6 +90,7 @@ async function* streamEvents(
 async function chatOnce(
   req: AdapterRequest,
   omit: ReadonlySet<string>,
+  boosted = false,
 ): Promise<AdapterResult> {
   const res = await upstreamRequest({
     validated: req.validated,
@@ -130,7 +131,22 @@ async function chatOnce(
     .map((b) => b.text!)
     .join("");
   if (!text) {
-    throw new GatewayError("upstream_error", "Provider response missing content", 502);
+    const stop = json.stop_reason as string | undefined;
+    // If the model exhausted max_tokens (e.g. thinking models), retry once
+    // with a bigger budget.
+    const sent = req.params?.maxTokens ?? 4096;
+    if (stop === "max_tokens" && !boosted && sent < 16384) {
+      return chatOnce(
+        { ...req, params: { ...req.params, maxTokens: Math.min(sent * 2, 16384) } },
+        omit,
+        true,
+      );
+    }
+    throw new GatewayError(
+      "upstream_error",
+      `Provider response missing content${stop ? ` (stop_reason=${stop})` : ""}`,
+      502,
+    );
   }
   const usage = json.usage as
     | { input_tokens?: number; output_tokens?: number }

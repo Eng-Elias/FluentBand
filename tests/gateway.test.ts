@@ -14,7 +14,9 @@ let mode:
   | "anthropic"
   | "sse-openai"
   | "sse-anthropic"
-  | "reject-temp" = "openai";
+  | "reject-temp"
+  | "openai-length" = "openai";
+let lengthCalls = 0;
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
@@ -40,7 +42,22 @@ beforeAll(async () => {
         );
         return;
       }
-      if (mode === "openai") {
+      if (mode === "openai-length" && lengthCalls++ === 0) {
+        // Reasoning model burned all max_tokens on thinking → empty content.
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                message: { content: "", reasoning_content: "thinking…" },
+                finish_reason: "length",
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if (mode === "openai" || mode === "openai-length") {
         res.setHeader("content-type", "application/json");
         res.end(
           JSON.stringify({
@@ -195,6 +212,23 @@ describe("adapters", () => {
     expect(res.kind).toBe("complete");
     expect(JSON.parse(lastBody).temperature).toBeUndefined();
     expect(JSON.parse(lastBody).max_tokens).toBe(100);
+  });
+
+  it("openai: retries with doubled max_tokens on finish_reason=length", async () => {
+    mode = "openai-length";
+    lengthCalls = 0;
+    const res = await openaiAdapter.chat({
+      provider: { kind: "openai", baseUrl: base + "/v1", model: "mimo" },
+      apiKey: "k",
+      messages: [{ role: "user", content: "hi" }],
+      params: { maxTokens: 100 },
+      stream: false,
+      validated: await validated(),
+    });
+    expect(res.kind).toBe("complete");
+    if (res.kind === "complete") expect(res.text).toBe("hello back");
+    expect(lengthCalls).toBe(2);
+    expect(JSON.parse(lastBody).max_tokens).toBe(200);
   });
 
   it("connects to the pinned IP when the URL uses a hostname", async () => {
